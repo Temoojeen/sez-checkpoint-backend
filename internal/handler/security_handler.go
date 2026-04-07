@@ -26,13 +26,11 @@ func NewSecurityHandler(
 	}
 }
 
-// GetRecentLogs - получает последние 5 проездов
+// GetRecentLogs - получает последние 5 проездов за сегодня
 func (h *SecurityHandler) GetRecentLogs(c *gin.Context) {
-	logs, err := h.accessLogRepo.GetRecent(5)
+	logs, err := h.accessLogRepo.GetRecentToday(5)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Ошибка при получении истории",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при получении истории"})
 		return
 	}
 
@@ -164,38 +162,17 @@ func (h *SecurityHandler) logAccessAttempt(plateNumber string, granted bool, lis
 	go h.accessLogRepo.Create(log)
 }
 
-// GetStatistics - получает статистику проездов
+// internal/handler/security_handler.go - исправляем GetStatistics
+
+// GetStatistics - получает статистику проездов (только за сегодня)
 func (h *SecurityHandler) GetStatistics(c *gin.Context) {
-	// Получаем параметры дат из запроса
-	from := c.Query("from")
-	to := c.Query("to")
+	// Получаем начало и конец сегодняшнего дня
+	now := time.Now()
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	endOfDay := startOfDay.Add(24 * time.Hour).Add(-time.Second)
 
-	var fromTime, toTime time.Time
-	var err error
-
-	if from != "" {
-		fromTime, err = time.Parse("2006-01-02", from)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный формат даты from"})
-			return
-		}
-	} else {
-		fromTime = time.Now().AddDate(0, 0, -7) // по умолчанию за неделю
-	}
-
-	if to != "" {
-		toTime, err = time.Parse("2006-01-02", to)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный формат даты to"})
-			return
-		}
-		toTime = toTime.Add(24 * time.Hour).Add(-time.Second) // конец дня
-	} else {
-		toTime = time.Now()
-	}
-
-	// Получаем логи за период
-	logs, err := h.accessLogRepo.GetByDateRange(fromTime, toTime)
+	// Получаем логи за сегодня
+	logs, err := h.accessLogRepo.GetByDateRange(startOfDay, endOfDay)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при получении статистики"})
 		return
@@ -216,8 +193,8 @@ func (h *SecurityHandler) GetStatistics(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"period": gin.H{
-			"from": fromTime.Format("2006-01-02"),
-			"to":   toTime.Format("2006-01-02"),
+			"from": startOfDay.Format("2006-01-02"),
+			"to":   endOfDay.Format("2006-01-02"),
 		},
 		"statistics": gin.H{
 			"total":   total,
@@ -244,4 +221,61 @@ func (h *SecurityHandler) GetLogsByPlate(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, logs)
+}
+
+// internal/handler/security_handler.go - добавить метод
+
+// internal/handler/security_handler.go - обновляем метод GetAllLogs
+
+// GetAllLogs - получает все логи с фильтрацией по датам и номеру (для админа)
+func (h *SecurityHandler) GetAllLogs(c *gin.Context) {
+	from := c.Query("from")
+	to := c.Query("to")
+	plateNumber := c.Query("plateNumber") // добавляем фильтр по номеру
+
+	var fromTime, toTime time.Time
+	var err error
+
+	// Если даты не указаны - за последние 24 часа
+	if from == "" && to == "" {
+		toTime = time.Now()
+		fromTime = toTime.AddDate(0, 0, -1)
+	} else {
+		if from != "" {
+			fromTime, err = time.Parse("2006-01-02", from)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный формат даты from"})
+				return
+			}
+		} else {
+			fromTime = time.Now().AddDate(0, 0, -7)
+		}
+
+		if to != "" {
+			toTime, err = time.Parse("2006-01-02", to)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный формат даты to"})
+				return
+			}
+			toTime = toTime.Add(24 * time.Hour).Add(-time.Second)
+		} else {
+			toTime = time.Now()
+		}
+	}
+
+	// Получаем логи с фильтрацией
+	logs, err := h.accessLogRepo.GetByDateRangeAndPlate(fromTime, toTime, plateNumber)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при получении логов"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"logs":  logs,
+		"total": len(logs),
+		"period": gin.H{
+			"from": fromTime.Format("2006-01-02"),
+			"to":   toTime.Format("2006-01-02"),
+		},
+	})
 }

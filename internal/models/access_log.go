@@ -3,7 +3,7 @@ package models
 import "time"
 
 type AccessLog struct {
-	ID               string    `json:"id"`
+	ID               string    `json:"id"` // Это поле обязательно
 	PlateNumber      string    `json:"plateNumber"`
 	OrganizationName string    `json:"organizationName"`
 	ListName         string    `json:"listName"`

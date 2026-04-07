@@ -2,6 +2,7 @@ package repository
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 
 	"sez-checkpoint-backend/internal/models"
@@ -31,16 +32,23 @@ func (r *AccessLogRepository) Create(log *models.AccessLog) error {
 	return err
 }
 
-// GetRecent - получает последние N записей
-func (r *AccessLogRepository) GetRecent(limit int) ([]*models.AccessLog, error) {
+// internal/repository/access_log_repository.go - добавить метод
+
+// GetRecentToday - получает последние N проездов за сегодня
+func (r *AccessLogRepository) GetRecentToday(limit int) ([]*models.AccessLog, error) {
+	now := time.Now()
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+
 	rows, err := r.db.Query(`
         SELECT 
             id, plate_number, organization_name, list_name, 
             image_path, access_granted, created_at
         FROM access_logs
+        WHERE created_at >= $1
         ORDER BY created_at DESC
-        LIMIT $1
-    `, limit)
+        LIMIT $2
+    `, startOfDay, limit)
+
 	if err != nil {
 		return nil, err
 	}
@@ -146,4 +154,47 @@ func (r *AccessLogRepository) GetTodayStats() (map[string]interface{}, error) {
 		"denied":  denied,
 	}
 	return stats, nil
+}
+
+// internal/repository/access_log_repository.go - добавляем новый метод
+
+// GetByDateRangeAndPlate - получает записи за период с фильтром по номеру
+func (r *AccessLogRepository) GetByDateRangeAndPlate(from, to time.Time, plateNumber string) ([]*models.AccessLog, error) {
+	query := `
+        SELECT 
+            id, plate_number, organization_name, list_name, 
+            image_path, access_granted, created_at
+        FROM access_logs
+        WHERE created_at BETWEEN $1 AND $2
+    `
+	args := []interface{}{from, to}
+	argCount := 3
+
+	if plateNumber != "" {
+		query += " AND plate_number ILIKE $" + fmt.Sprint(argCount)
+		args = append(args, "%"+plateNumber+"%")
+		argCount++
+	}
+
+	query += " ORDER BY created_at DESC"
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []*models.AccessLog
+	for rows.Next() {
+		log := &models.AccessLog{}
+		err := rows.Scan(
+			&log.ID, &log.PlateNumber, &log.OrganizationName, &log.ListName,
+			&log.ImagePath, &log.AccessGranted, &log.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		logs = append(logs, log)
+	}
+	return logs, nil
 }

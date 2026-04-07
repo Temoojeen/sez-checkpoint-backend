@@ -16,6 +16,7 @@ import (
 	"sez-checkpoint-backend/internal/handler"
 	"sez-checkpoint-backend/internal/middleware"
 	"sez-checkpoint-backend/internal/repository"
+	"sez-checkpoint-backend/internal/websocket"
 )
 
 func main() {
@@ -52,6 +53,11 @@ func main() {
 	accessLogRepo := repository.NewAccessLogRepository(db)
 	organizationRepo := repository.NewOrganizationRepository(db)
 
+	// Создаем WebSocket хаб и запускаем его
+	wsHub := websocket.NewHub()
+	go wsHub.Run()
+	log.Println("✅ WebSocket хаб запущен")
+
 	// Создаем хендлеры
 	authHandler := handler.NewAuthHandler(userRepo, getJWTKey())
 	userHandler := handler.NewUserHandler(userRepo, organizationRepo)
@@ -63,7 +69,7 @@ func main() {
 	)
 	approvedPlateHandler := handler.NewApprovedPlateHandler(
 		approvedPlateRepo,
-		userRepo, // Передаем userRepo для проверки прав
+		userRepo,
 	)
 	adminHandler := handler.NewAdminHandler(
 		userRepo,
@@ -78,8 +84,12 @@ func main() {
 		approvedPlateRepo,
 	)
 
-	// Создаем ANPR хендлер с репозиториями
-	anprHandler := handler.NewANPRHandler(accessLogRepo, approvedPlateRepo)
+	// Создаем ANPR хендлер с WebSocket хабом
+	anprHandler := handler.NewANPRHandler(
+		accessLogRepo,
+		approvedPlateRepo,
+		wsHub, // Передаем WebSocket хаб
+	)
 
 	// Настраиваем роутер
 	router := setupRouter(
@@ -90,6 +100,7 @@ func main() {
 		adminHandler,
 		securityHandler,
 		anprHandler,
+		wsHub, // Передаем WebSocket хаб для WebSocket endpoint
 	)
 
 	// Запускаем сервер
@@ -101,6 +112,7 @@ func main() {
 	log.Printf("🚀 Сервер sez-checkpoint-backend запущен на порту %s", port)
 	log.Printf("🔐 Тестовый админ: логин=admin, пароль=12346")
 	log.Printf("📸 ANPR endpoint: http://0.0.0.0:%s/api/camera-events", port)
+	log.Printf("🔌 WebSocket endpoint: ws://0.0.0.0:%s/ws", port)
 
 	if err := router.Run(":" + port); err != nil {
 		log.Fatal("❌ Ошибка запуска сервера:", err)
@@ -347,7 +359,7 @@ func createAllTables(db *sql.DB) error {
 		return fmt.Errorf("ошибка создания таблицы applications: %v", err)
 	}
 
-	// Создаем таблицу утвержденных номеров - БЕЗ ВНЕШНЕГО КЛЮЧА НА applications
+	// Создаем таблицу утвержденных номеров
 	_, err = db.Exec(`
         CREATE TABLE IF NOT EXISTS approved_plates (
             id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -470,18 +482,22 @@ func setupRouter(
 	adminHandler *handler.AdminHandler,
 	securityHandler *handler.SecurityHandler,
 	anprHandler *handler.ANPRHandler,
+	wsHub *websocket.Hub,
 ) *gin.Engine {
 	router := gin.Default()
 
 	// Настройка CORS
 	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowOrigins:     []string{"http://localhost:3000", "http://localhost:3001", "http://10.24.32.31:3000"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept", "X-Requested-With"},
 		ExposeHeaders:    []string{"Content-Length", "Content-Type"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
+
+	// WebSocket endpoint (публичный)
+	router.GET("/ws", wsHub.ServeWebSocket)
 
 	// Публичный маршрут для камеры Hikvision (без JWT аутентификации)
 	router.POST("/api/camera-events", anprHandler.HandleCameraEvent)
@@ -553,6 +569,7 @@ func setupRouter(
 			admin.GET("/access-lists/:id", adminHandler.GetAccessList)
 			admin.PUT("/access-lists/:id", adminHandler.UpdateAccessList)
 			admin.DELETE("/access-lists/:id", adminHandler.DeleteAccessList)
+			admin.GET("/access-logs", securityHandler.GetAllLogs)
 
 			// Права пользователей на списки
 			admin.POST("/users/:id/list-permissions", adminHandler.AddListPermission)
