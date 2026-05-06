@@ -24,14 +24,14 @@ func (r *ApplicationRepository) Create(app *models.Application) error {
         INSERT INTO applications (
             id, plate_number, vehicle_brand, vehicle_model, vehicle_color,
             contract_id, organization_id, list_id, applicant_id,
-            status, valid_from, valid_until, notes,
+            status, destination, valid_from, valid_until, notes,
             created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
     `
 	_, err := r.db.Exec(query,
 		app.ID, app.PlateNumber, app.VehicleBrand, app.VehicleModel, app.VehicleColor,
 		app.ContractID, app.OrganizationID, app.ListID, app.ApplicantID,
-		app.Status, app.ValidFrom, app.ValidUntil, app.Notes,
+		app.Status, app.Destination, app.ValidFrom, app.ValidUntil, app.Notes,
 		time.Now(), time.Now(),
 	)
 	return err
@@ -44,7 +44,7 @@ func (r *ApplicationRepository) GetByID(id string) (*models.Application, error) 
         SELECT 
             a.id, a.plate_number, a.vehicle_brand, a.vehicle_model, a.vehicle_color,
             a.contract_id, a.organization_id, a.list_id, a.applicant_id,
-            a.status, a.operator_id, a.supervisor_id,
+            a.status, a.destination, a.operator_id, a.supervisor_id,
             a.operator_approved_at, a.supervisor_approved_at,
             a.rejected_at, a.reject_reason,
             a.valid_from, a.valid_until, a.notes,
@@ -68,7 +68,7 @@ func (r *ApplicationRepository) GetByID(id string) (*models.Application, error) 
 	err := r.db.QueryRow(query, id).Scan(
 		&app.ID, &app.PlateNumber, &app.VehicleBrand, &app.VehicleModel, &app.VehicleColor,
 		&contractID, &organizationID, &app.ListID, &app.ApplicantID,
-		&app.Status, &operatorID, &supervisorID,
+		&app.Status, &app.Destination, &operatorID, &supervisorID,
 		&operatorApprovedAt, &supervisorApprovedAt,
 		&rejectedAt, &rejectReason,
 		&validFrom, &validUntil, &notes,
@@ -250,7 +250,7 @@ func (r *ApplicationRepository) GetByApplicant(applicantID string) ([]*models.Ap
         SELECT 
             a.id, a.plate_number, a.vehicle_brand, a.vehicle_model, a.vehicle_color,
             a.contract_id, a.organization_id, a.list_id, a.applicant_id,
-            a.status, a.operator_id, a.supervisor_id,
+            a.status, a.destination, a.operator_id, a.supervisor_id,
             a.operator_approved_at, a.supervisor_approved_at,
             a.rejected_at, a.reject_reason,
             a.valid_from, a.valid_until, a.notes,
@@ -282,7 +282,7 @@ func (r *ApplicationRepository) GetByApplicant(applicantID string) ([]*models.Ap
 		err := rows.Scan(
 			&app.ID, &app.PlateNumber, &app.VehicleBrand, &app.VehicleModel, &app.VehicleColor,
 			&contractID, &organizationID, &app.ListID, &app.ApplicantID,
-			&app.Status, &operatorID, &supervisorID,
+			&app.Status, &app.Destination, &operatorID, &supervisorID,
 			&operatorApprovedAt, &supervisorApprovedAt,
 			&rejectedAt, &rejectReason,
 			&validFrom, &validUntil, &notes,
@@ -468,9 +468,214 @@ func (r *ApplicationRepository) UpdateStatus(
 	return nil
 }
 
-// GetPendingForOperator - получает заявки, ожидающие оператора
+// GetPendingForOperator - получает заявки, ожидающие оператора КПП 1
 func (r *ApplicationRepository) GetPendingForOperator() ([]*models.Application, error) {
-	return r.GetByStatus("pending")
+	rows, err := r.db.Query(`
+        SELECT 
+            a.id, a.plate_number, a.vehicle_brand, a.vehicle_model, a.vehicle_color,
+            a.contract_id, a.organization_id, a.list_id, a.applicant_id,
+            a.status, a.destination, a.operator_id, a.supervisor_id,
+            a.operator_approved_at, a.supervisor_approved_at,
+            a.rejected_at, a.reject_reason,
+            a.valid_from, a.valid_until, a.notes,
+            a.created_at, a.updated_at,
+            o.name as organization_name,
+            al.name as list_name,
+            u.full_name as applicant_name,
+            c.contract_number
+        FROM applications a
+        LEFT JOIN organizations o ON a.organization_id = o.id
+        LEFT JOIN access_lists al ON a.list_id = al.id
+        LEFT JOIN users u ON a.applicant_id = u.id
+        LEFT JOIN contracts c ON a.contract_id = c.id
+        WHERE a.status = 'pending' AND a.destination = 'kpp1'
+        ORDER BY a.created_at DESC
+    `)
+	if err != nil {
+		log.Printf("❌ Ошибка GetPendingForOperator: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var applications []*models.Application
+	for rows.Next() {
+		app := &models.Application{}
+
+		var contractID, organizationID, operatorID, supervisorID sql.NullString
+		var operatorApprovedAt, supervisorApprovedAt, rejectedAt, validFrom, validUntil sql.NullTime
+		var rejectReason, notes, organizationName, listName, applicantName, contractNumber sql.NullString
+
+		err := rows.Scan(
+			&app.ID, &app.PlateNumber, &app.VehicleBrand, &app.VehicleModel, &app.VehicleColor,
+			&contractID, &organizationID, &app.ListID, &app.ApplicantID,
+			&app.Status, &app.Destination, &operatorID, &supervisorID,
+			&operatorApprovedAt, &supervisorApprovedAt,
+			&rejectedAt, &rejectReason,
+			&validFrom, &validUntil, &notes,
+			&app.CreatedAt, &app.UpdatedAt,
+			&organizationName, &listName, &applicantName, &contractNumber,
+		)
+		if err != nil {
+			log.Printf("❌ Ошибка сканирования GetPendingForOperator: %v", err)
+			continue
+		}
+
+		// Конвертируем NULL значения
+		if contractID.Valid {
+			app.ContractID = &contractID.String
+		}
+		if organizationID.Valid {
+			app.OrganizationID = &organizationID.String
+		}
+		if operatorID.Valid {
+			app.OperatorID = &operatorID.String
+		}
+		if supervisorID.Valid {
+			app.SupervisorID = &supervisorID.String
+		}
+		if operatorApprovedAt.Valid {
+			app.OperatorApprovedAt = &operatorApprovedAt.Time
+		}
+		if supervisorApprovedAt.Valid {
+			app.SupervisorApprovedAt = &supervisorApprovedAt.Time
+		}
+		if rejectedAt.Valid {
+			app.RejectedAt = &rejectedAt.Time
+		}
+		if rejectReason.Valid {
+			app.RejectReason = rejectReason.String
+		}
+		if validFrom.Valid {
+			app.ValidFrom = &validFrom.Time
+		}
+		if validUntil.Valid {
+			app.ValidUntil = &validUntil.Time
+		}
+		if notes.Valid {
+			app.Notes = notes.String
+		}
+		if organizationName.Valid {
+			app.OrganizationName = organizationName.String
+		}
+		if listName.Valid {
+			app.ListName = listName.String
+		}
+		if applicantName.Valid {
+			app.ApplicantName = applicantName.String
+		}
+		if contractNumber.Valid {
+			app.ContractNumber = contractNumber.String
+		}
+
+		applications = append(applications, app)
+	}
+
+	return applications, nil
+}
+
+// GetPendingForSmartParkingOperator - получает заявки, ожидающие оператора SmartParking
+func (r *ApplicationRepository) GetPendingForSmartParkingOperator() ([]*models.Application, error) {
+	rows, err := r.db.Query(`
+        SELECT 
+            a.id, a.plate_number, a.vehicle_brand, a.vehicle_model, a.vehicle_color,
+            a.contract_id, a.organization_id, a.list_id, a.applicant_id,
+            a.status, a.destination, a.operator_id, a.supervisor_id,
+            a.operator_approved_at, a.supervisor_approved_at,
+            a.rejected_at, a.reject_reason,
+            a.valid_from, a.valid_until, a.notes,
+            a.created_at, a.updated_at,
+            o.name as organization_name,
+            al.name as list_name,
+            u.full_name as applicant_name,
+            c.contract_number
+        FROM applications a
+        LEFT JOIN organizations o ON a.organization_id = o.id
+        LEFT JOIN access_lists al ON a.list_id = al.id
+        LEFT JOIN users u ON a.applicant_id = u.id
+        LEFT JOIN contracts c ON a.contract_id = c.id
+        WHERE a.status = 'pending' AND a.destination = 'smartparking'
+        ORDER BY a.created_at DESC
+    `)
+	if err != nil {
+		log.Printf("❌ Ошибка GetPendingForSmartParkingOperator: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var applications []*models.Application
+	for rows.Next() {
+		app := &models.Application{}
+
+		var contractID, organizationID, operatorID, supervisorID sql.NullString
+		var operatorApprovedAt, supervisorApprovedAt, rejectedAt, validFrom, validUntil sql.NullTime
+		var rejectReason, notes, organizationName, listName, applicantName, contractNumber sql.NullString
+
+		err := rows.Scan(
+			&app.ID, &app.PlateNumber, &app.VehicleBrand, &app.VehicleModel, &app.VehicleColor,
+			&contractID, &organizationID, &app.ListID, &app.ApplicantID,
+			&app.Status, &app.Destination, &operatorID, &supervisorID,
+			&operatorApprovedAt, &supervisorApprovedAt,
+			&rejectedAt, &rejectReason,
+			&validFrom, &validUntil, &notes,
+			&app.CreatedAt, &app.UpdatedAt,
+			&organizationName, &listName, &applicantName, &contractNumber,
+		)
+		if err != nil {
+			log.Printf("❌ Ошибка сканирования GetPendingForSmartParkingOperator: %v", err)
+			continue
+		}
+
+		// Конвертируем NULL значения
+		if contractID.Valid {
+			app.ContractID = &contractID.String
+		}
+		if organizationID.Valid {
+			app.OrganizationID = &organizationID.String
+		}
+		if operatorID.Valid {
+			app.OperatorID = &operatorID.String
+		}
+		if supervisorID.Valid {
+			app.SupervisorID = &supervisorID.String
+		}
+		if operatorApprovedAt.Valid {
+			app.OperatorApprovedAt = &operatorApprovedAt.Time
+		}
+		if supervisorApprovedAt.Valid {
+			app.SupervisorApprovedAt = &supervisorApprovedAt.Time
+		}
+		if rejectedAt.Valid {
+			app.RejectedAt = &rejectedAt.Time
+		}
+		if rejectReason.Valid {
+			app.RejectReason = rejectReason.String
+		}
+		if validFrom.Valid {
+			app.ValidFrom = &validFrom.Time
+		}
+		if validUntil.Valid {
+			app.ValidUntil = &validUntil.Time
+		}
+		if notes.Valid {
+			app.Notes = notes.String
+		}
+		if organizationName.Valid {
+			app.OrganizationName = organizationName.String
+		}
+		if listName.Valid {
+			app.ListName = listName.String
+		}
+		if applicantName.Valid {
+			app.ApplicantName = applicantName.String
+		}
+		if contractNumber.Valid {
+			app.ContractNumber = contractNumber.String
+		}
+
+		applications = append(applications, app)
+	}
+
+	return applications, nil
 }
 
 // GetPendingForSupervisor - получает заявки, ожидающие руководителя
@@ -543,7 +748,7 @@ func (r *ApplicationRepository) GetAllFiltered(status, organizationID, listID, f
         SELECT 
             a.id, a.plate_number, a.vehicle_brand, a.vehicle_model, a.vehicle_color,
             a.contract_id, a.organization_id, a.list_id, a.applicant_id,
-            a.status, a.operator_id, a.supervisor_id,
+            a.status, a.destination, a.operator_id, a.supervisor_id,
             a.operator_approved_at, a.supervisor_approved_at,
             a.rejected_at, a.reject_reason,
             a.valid_from, a.valid_until, a.notes,
@@ -562,19 +767,19 @@ func (r *ApplicationRepository) GetAllFiltered(status, organizationID, listID, f
 	var args []interface{}
 	argCount := 1
 
-	if status != "" {
+	if status != "" && status != "all" {
 		query += " AND a.status = $" + fmt.Sprint(argCount)
 		args = append(args, status)
 		argCount++
 	}
 
-	if organizationID != "" {
+	if organizationID != "" && organizationID != "all" {
 		query += " AND a.organization_id = $" + fmt.Sprint(argCount)
 		args = append(args, organizationID)
 		argCount++
 	}
 
-	if listID != "" {
+	if listID != "" && listID != "all" {
 		query += " AND a.list_id = $" + fmt.Sprint(argCount)
 		args = append(args, listID)
 		argCount++
@@ -612,7 +817,7 @@ func (r *ApplicationRepository) GetAllFiltered(status, organizationID, listID, f
 		err := rows.Scan(
 			&app.ID, &app.PlateNumber, &app.VehicleBrand, &app.VehicleModel, &app.VehicleColor,
 			&contractID, &organizationID, &app.ListID, &app.ApplicantID,
-			&app.Status, &operatorID, &supervisorID,
+			&app.Status, &app.Destination, &operatorID, &supervisorID,
 			&operatorApprovedAt, &supervisorApprovedAt,
 			&rejectedAt, &rejectReason,
 			&validFrom, &validUntil, &notes,
@@ -672,11 +877,6 @@ func (r *ApplicationRepository) GetAllFiltered(status, organizationID, listID, f
 		}
 
 		applications = append(applications, app)
-	}
-
-	if err = rows.Err(); err != nil {
-		log.Printf("❌ Ошибка после итерации GetAllFiltered: %v", err)
-		return nil, err
 	}
 
 	return applications, nil
@@ -757,12 +957,30 @@ func (r *ApplicationRepository) DeleteTx(tx *sql.Tx, id string) error {
 		return errors.New("заявка не найдена")
 	}
 
-	log.Printf("✅ Заявка %s успешно удалена", id)
+	log.Printf("✅ Заявка %s успешно удалена в транзакции", id)
 	return nil
 }
 
 // Delete - удаляет заявку
 func (r *ApplicationRepository) Delete(id string) error {
+	query := `DELETE FROM applications WHERE id = $1`
+	result, err := r.db.Exec(query, id)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return errors.New("заявка не найдена")
+	}
+	return nil
+}
+
+// HardDelete - полностью удаляет заявку из БД (для админа)
+func (r *ApplicationRepository) HardDelete(id string) error {
 	query := `DELETE FROM applications WHERE id = $1`
 	result, err := r.db.Exec(query, id)
 	if err != nil {

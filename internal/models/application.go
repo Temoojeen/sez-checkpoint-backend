@@ -17,6 +17,7 @@ type Application struct {
 	ApplicantID          string     `json:"applicantId"`
 	ApplicantName        string     `json:"applicantName,omitempty"`
 	Status               string     `json:"status"`
+	Destination          string     `json:"destination"` // "kpp1" или "smartparking"
 	OperatorID           *string    `json:"operatorId"`
 	SupervisorID         *string    `json:"supervisorId"`
 	OperatorApprovedAt   *time.Time `json:"operatorApprovedAt"`
@@ -40,6 +41,7 @@ type CreateApplicationRequest struct {
 	ValidFrom      string `json:"validFrom"`
 	ValidUntil     string `json:"validUntil"`
 	Notes          string `json:"notes"`
+	SmartParking   bool   `json:"smartParking"` // Новое поле
 }
 
 type ApproveApplicationRequest struct {

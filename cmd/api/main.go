@@ -52,6 +52,7 @@ func main() {
 	approvedPlateRepo := repository.NewApprovedPlateRepository(db)
 	accessLogRepo := repository.NewAccessLogRepository(db)
 	organizationRepo := repository.NewOrganizationRepository(db)
+	deletedPlateRepo := repository.NewDeletedPlateRepository(db)
 
 	// Создаем WebSocket хаб и запускаем его
 	wsHub := websocket.NewHub()
@@ -70,6 +71,7 @@ func main() {
 	approvedPlateHandler := handler.NewApprovedPlateHandler(
 		approvedPlateRepo,
 		userRepo,
+		deletedPlateRepo, // Передаем deletedPlateRepo
 	)
 	adminHandler := handler.NewAdminHandler(
 		userRepo,
@@ -88,8 +90,11 @@ func main() {
 	anprHandler := handler.NewANPRHandler(
 		accessLogRepo,
 		approvedPlateRepo,
-		wsHub, // Передаем WebSocket хаб
+		wsHub,
 	)
+
+	// Создаем хендлер для удаленных номеров
+	deletedPlateHandler := handler.NewDeletedPlateHandler(deletedPlateRepo)
 
 	// Настраиваем роутер
 	router := setupRouter(
@@ -100,7 +105,8 @@ func main() {
 		adminHandler,
 		securityHandler,
 		anprHandler,
-		wsHub, // Передаем WebSocket хаб для WebSocket endpoint
+		deletedPlateHandler,
+		wsHub,
 	)
 
 	// Запускаем сервер
@@ -110,7 +116,6 @@ func main() {
 	}
 
 	log.Printf("🚀 Сервер sez-checkpoint-backend запущен на порту %s", port)
-	log.Printf("🔐 Тестовый админ: логин=admin, пароль=12346")
 	log.Printf("📸 ANPR endpoint: http://0.0.0.0:%s/api/camera-events", port)
 	log.Printf("🔌 WebSocket endpoint: ws://0.0.0.0:%s/ws", port)
 
@@ -194,8 +199,8 @@ func createAdminUser(db *sql.DB) error {
 
 	// Вставляем админа
 	_, err = db.Exec(`
-        INSERT INTO users (
-            id, username, password_hash, full_name, role_id, is_active, created_at, updated_at
+	INSERT INTO users (
+		id, username, password_hash, full_name, role_id, is_active, created_at, updated_at
         ) VALUES (
             'ffffffff-ffff-ffff-ffff-ffffffffffff', 
             'admin', 
@@ -205,8 +210,8 @@ func createAdminUser(db *sql.DB) error {
             true, 
             NOW(), 
             NOW()
-        )
-    `, string(hashedPassword))
+			)
+			`, string(hashedPassword))
 
 	if err != nil {
 		return fmt.Errorf("ошибка при создании админа: %v", err)
@@ -224,75 +229,81 @@ func createAllTables(db *sql.DB) error {
 		return fmt.Errorf("ошибка включения uuid-ossp: %v", err)
 	}
 
+	// Добавляем колонку destination если её нет (для существующих БД)
+	_, err = db.Exec(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS destination VARCHAR(20) DEFAULT 'kpp1'`)
+	if err != nil {
+		log.Printf("⚠️ Ошибка при добавлении колонки destination: %v", err)
+	}
+
 	// Создаем таблицу организаций
 	_, err = db.Exec(`
-        CREATE TABLE IF NOT EXISTS organizations (
-            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-            name VARCHAR(255) NOT NULL,
-            bin VARCHAR(12) UNIQUE,
-            address TEXT,
-            contact_phone VARCHAR(20),
-            contact_email VARCHAR(100),
-            created_at TIMESTAMP DEFAULT NOW(),
-            updated_at TIMESTAMP DEFAULT NOW()
-        )
-    `)
+			CREATE TABLE IF NOT EXISTS organizations (
+				id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+				name VARCHAR(255) NOT NULL,
+				bin VARCHAR(12) UNIQUE,
+				address TEXT,
+				contact_phone VARCHAR(20),
+				contact_email VARCHAR(100),
+				created_at TIMESTAMP DEFAULT NOW(),
+				updated_at TIMESTAMP DEFAULT NOW()
+				)
+				`)
 	if err != nil {
 		return fmt.Errorf("ошибка создания таблицы organizations: %v", err)
 	}
 
 	// Создаем таблицу ролей
 	_, err = db.Exec(`
-        CREATE TABLE IF NOT EXISTS roles (
-            id SERIAL PRIMARY KEY,
-            name VARCHAR(50) UNIQUE NOT NULL,
-            description TEXT
-        )
-    `)
+				CREATE TABLE IF NOT EXISTS roles (
+					id SERIAL PRIMARY KEY,
+					name VARCHAR(50) UNIQUE NOT NULL,
+					description TEXT
+					)
+					`)
 	if err != nil {
 		return fmt.Errorf("ошибка создания таблицы roles: %v", err)
 	}
 
 	// Создаем таблицу договоров
 	_, err = db.Exec(`
-        CREATE TABLE IF NOT EXISTS contracts (
-            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-            contract_number VARCHAR(50) UNIQUE NOT NULL,
-            organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
-            contract_date DATE NOT NULL,
-            valid_from DATE NOT NULL,
-            valid_until DATE,
-            contract_type VARCHAR(50) DEFAULT 'standard',
-            status VARCHAR(20) DEFAULT 'active',
-            file_path VARCHAR(500),
-            notes TEXT,
-            created_by UUID,
-            created_at TIMESTAMP DEFAULT NOW(),
-            updated_at TIMESTAMP DEFAULT NOW()
-        )
-    `)
+					CREATE TABLE IF NOT EXISTS contracts (
+						id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+						contract_number VARCHAR(50) UNIQUE NOT NULL,
+						organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+						contract_date DATE NOT NULL,
+						valid_from DATE NOT NULL,
+						valid_until DATE,
+						contract_type VARCHAR(50) DEFAULT 'standard',
+						status VARCHAR(20) DEFAULT 'active',
+						file_path VARCHAR(500),
+						notes TEXT,
+						created_by UUID,
+						created_at TIMESTAMP DEFAULT NOW(),
+						updated_at TIMESTAMP DEFAULT NOW()
+						)
+						`)
 	if err != nil {
 		return fmt.Errorf("ошибка создания таблицы contracts: %v", err)
 	}
 
 	// Создаем таблицу пользователей
 	_, err = db.Exec(`
-        CREATE TABLE IF NOT EXISTS users (
-            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-            username VARCHAR(100) UNIQUE NOT NULL,
-            password_hash VARCHAR(255) NOT NULL,
-            full_name VARCHAR(255) NOT NULL,
-            email VARCHAR(100),
-            phone VARCHAR(20),
-            organization_id UUID REFERENCES organizations(id) ON DELETE SET NULL,
-            role_id INTEGER REFERENCES roles(id),
-            is_active BOOLEAN DEFAULT true,
-            created_by UUID,
-            last_login TIMESTAMP,
-            created_at TIMESTAMP DEFAULT NOW(),
-            updated_at TIMESTAMP DEFAULT NOW()
-        )
-    `)
+						CREATE TABLE IF NOT EXISTS users (
+							id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+							username VARCHAR(100) UNIQUE NOT NULL,
+							password_hash VARCHAR(255) NOT NULL,
+							full_name VARCHAR(255) NOT NULL,
+							email VARCHAR(100),
+							phone VARCHAR(20),
+							organization_id UUID REFERENCES organizations(id) ON DELETE SET NULL,
+							role_id INTEGER REFERENCES roles(id),
+							is_active BOOLEAN DEFAULT true,
+							created_by UUID,
+							last_login TIMESTAMP,
+							created_at TIMESTAMP DEFAULT NOW(),
+							updated_at TIMESTAMP DEFAULT NOW()
+							)
+							`)
 	if err != nil {
 		return fmt.Errorf("ошибка создания таблицы users: %v", err)
 	}
@@ -342,6 +353,7 @@ func createAllTables(db *sql.DB) error {
             list_id UUID REFERENCES access_lists(id),
             applicant_id UUID REFERENCES users(id),
             status VARCHAR(20) DEFAULT 'pending',
+            destination VARCHAR(20) DEFAULT 'kpp1',
             operator_id UUID REFERENCES users(id),
             supervisor_id UUID REFERENCES users(id),
             operator_approved_at TIMESTAMP,
@@ -424,6 +436,30 @@ func createAllTables(db *sql.DB) error {
 		return fmt.Errorf("ошибка создания таблицы access_logs: %v", err)
 	}
 
+	// Создаем таблицу истории удаленных номеров
+	_, err = db.Exec(`
+        CREATE TABLE IF NOT EXISTS deleted_plates (
+            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            plate_number VARCHAR(20) NOT NULL,
+            vehicle_brand VARCHAR(50),
+            vehicle_model VARCHAR(50),
+            vehicle_color VARCHAR(30),
+            organization_id UUID REFERENCES organizations(id),
+            organization_name VARCHAR(255),
+            list_id UUID REFERENCES access_lists(id),
+            list_name VARCHAR(100),
+            deleted_by UUID REFERENCES users(id),
+            deleted_by_name VARCHAR(255),
+            delete_reason TEXT,
+            original_plate_id UUID,
+            created_at TIMESTAMP DEFAULT NOW(),
+            deleted_at TIMESTAMP DEFAULT NOW()
+        )
+    `)
+	if err != nil {
+		return fmt.Errorf("ошибка создания таблицы deleted_plates: %v", err)
+	}
+
 	// Создаем индексы для быстрого поиска
 	indexes := []string{
 		"CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)",
@@ -433,6 +469,7 @@ func createAllTables(db *sql.DB) error {
 		"CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status)",
 		"CREATE INDEX IF NOT EXISTS idx_applications_applicant ON applications(applicant_id)",
 		"CREATE INDEX IF NOT EXISTS idx_applications_contract ON applications(contract_id)",
+		"CREATE INDEX IF NOT EXISTS idx_applications_destination ON applications(destination)",
 		"CREATE INDEX IF NOT EXISTS idx_approved_plates_number ON approved_plates(plate_number)",
 		"CREATE INDEX IF NOT EXISTS idx_approved_plates_valid ON approved_plates(valid_from, valid_until)",
 		"CREATE INDEX IF NOT EXISTS idx_access_logs_recent ON access_logs(created_at DESC)",
@@ -449,11 +486,14 @@ func createAllTables(db *sql.DB) error {
 	_, err = db.Exec(`
         INSERT INTO roles (id, name, description) VALUES 
             (1, 'admin', 'Полный доступ к системе'),
-            (2, 'operator', 'Обработка заявок'),
+            (2, 'operator', 'Обработка заявок на КПП 1'),
             (3, 'supervisor', 'Финальное утверждение'),
             (4, 'participant', 'Подача заявок'),
-            (5, 'security', 'Просмотр списков и истории')
-        ON CONFLICT (id) DO NOTHING
+            (5, 'security', 'Просмотр списков и истории'),
+            (6, 'smartparking_operator', 'Обработка заявок на SmartParking')
+        ON CONFLICT (id) DO UPDATE SET 
+            name = EXCLUDED.name,
+            description = EXCLUDED.description
     `)
 	if err != nil {
 		return fmt.Errorf("ошибка вставки ролей: %v", err)
@@ -482,6 +522,7 @@ func setupRouter(
 	adminHandler *handler.AdminHandler,
 	securityHandler *handler.SecurityHandler,
 	anprHandler *handler.ANPRHandler,
+	deletedPlateHandler *handler.DeletedPlateHandler,
 	wsHub *websocket.Hub,
 ) *gin.Engine {
 	router := gin.Default()
@@ -519,19 +560,32 @@ func setupRouter(
 
 		// Маршрут для получения номеров по списку (с проверкой прав)
 		api.GET("/approved-plates/list/:listId", approvedPlateHandler.GetPlatesByList)
+		// Маршрут для удаления номера участником
+		api.DELETE("/approved-plates/:id", approvedPlateHandler.DeleteByParticipant)
 
 		// Маршруты для участника (roleId = 4)
 		api.POST("/applications", middleware.RoleMiddleware(4), applicationHandler.Create)
 		api.GET("/applications/my", middleware.RoleMiddleware(4), applicationHandler.GetMyApplications)
 
-		// Маршруты для оператора (roleId = 2)
+		// Маршруты для оператора КПП 1 (roleId = 2)
 		api.GET("/applications/pending-operator", middleware.RoleMiddleware(2), applicationHandler.GetPendingForOperator)
 		api.PUT("/applications/:id/operator-approve", middleware.RoleMiddleware(2), applicationHandler.OperatorApprove)
-		api.PUT("/applications/:id/reject", middleware.RoleMiddleware(2), applicationHandler.Reject)
+		api.PUT("/applications/:id/reject", middleware.RoleMiddleware(2, 6), applicationHandler.Reject)
+
+		// Маршруты для оператора SmartParking (roleId = 6)
+		smartParking := api.Group("/smartparking")
+		smartParking.Use(middleware.RoleMiddleware(6))
+		{
+			smartParking.GET("/applications/pending", applicationHandler.GetPendingForSmartParkingOperator)
+			smartParking.PUT("/applications/:id/approve", applicationHandler.SmartParkingOperatorApprove)
+			smartParking.PUT("/applications/:id/reject", applicationHandler.Reject)
+			smartParking.DELETE("/applications/:id", applicationHandler.DeleteSmartParkingApplication)
+		}
 
 		// Маршруты для руководителя (roleId = 3)
 		api.GET("/applications/pending-supervisor", middleware.RoleMiddleware(3), applicationHandler.GetPendingForSupervisor)
 		api.PUT("/applications/:id/supervisor-approve", middleware.RoleMiddleware(3), applicationHandler.SupervisorApprove)
+		api.PUT("/applications/:id/supervisor-reject", middleware.RoleMiddleware(3), applicationHandler.SupervisorReject)
 
 		// Общий маршрут для получения заявки по ID (доступен всем)
 		api.GET("/applications/:id", applicationHandler.GetByID)
@@ -583,8 +637,12 @@ func setupRouter(
 			admin.DELETE("/approved-plates/:id", adminHandler.RemoveApprovedPlate)
 			admin.PUT("/approved-plates/:id", adminHandler.UpdateApprovedPlate)
 
+			// Удаленные номера
+			admin.GET("/deleted-plates", deletedPlateHandler.GetAll)
+
 			// Управление заявками (админские)
 			admin.GET("/applications", applicationHandler.GetAllApplications)
+			admin.DELETE("/applications/:id", applicationHandler.AdminDeleteApplication)
 			admin.PUT("/applications/:id/approve-as-operator", applicationHandler.AdminApproveAsOperator)
 			admin.PUT("/applications/:id/approve-as-supervisor", applicationHandler.AdminApproveAsSupervisor)
 			admin.PUT("/applications/:id/reject", applicationHandler.AdminReject)
@@ -599,6 +657,7 @@ func setupRouter(
 		{
 			security.GET("/recent-logs", securityHandler.GetRecentLogs)
 			security.GET("/check-plate/:number", securityHandler.CheckPlate)
+			security.GET("/search-plates", securityHandler.SearchPlates) // ДОБАВИТЬ ЭТУ СТРОКУ
 			security.POST("/log-access", securityHandler.LogAccess)
 			security.GET("/statistics", securityHandler.GetStatistics)
 			security.GET("/logs/plate/:number", securityHandler.GetLogsByPlate)

@@ -66,7 +66,11 @@ func (r *ApprovedPlateRepository) CreateTx(tx *sql.Tx, plate *models.ApprovedPla
 		plate.ApprovedBy, plate.ValidFrom, plate.ValidUntil, plate.IsActive, plate.Notes,
 		time.Now(), time.Now(),
 	)
-	return err
+	if err != nil {
+		log.Printf("❌ Ошибка в CreateTx: %v", err)
+		return err
+	}
+	return nil
 }
 
 // GetByPlateNumber - ищет номер в утвержденном списке
@@ -327,6 +331,7 @@ func (r *ApprovedPlateRepository) HardDelete(id string) error {
 	query := `DELETE FROM approved_plates WHERE id = $1`
 	result, err := r.db.Exec(query, id)
 	if err != nil {
+		log.Printf("❌ Ошибка в HardDelete: %v", err)
 		return err
 	}
 
@@ -337,6 +342,7 @@ func (r *ApprovedPlateRepository) HardDelete(id string) error {
 	if rowsAffected == 0 {
 		return errors.New("запись не найдена")
 	}
+	log.Printf("✅ Номер %s полностью удален из approved_plates", id)
 	return nil
 }
 
@@ -469,4 +475,55 @@ func (r *ApprovedPlateRepository) GetByPlateNumberIncludeInactive(plateNumber st
 		return nil, errors.New("номер не найден в списке пропусков")
 	}
 	return plate, err
+}
+
+// SearchByPartialPlate - поиск номеров по частичному совпадению
+func (r *ApprovedPlateRepository) SearchByPartialPlate(query string) ([]map[string]interface{}, error) {
+	rows, err := r.db.Query(`
+		SELECT DISTINCT ON (ap.plate_number)
+			ap.plate_number,
+			ap.is_active,
+			o.name as organization_name,
+			al.name as list_name,
+			al.color as list_color
+		FROM approved_plates ap
+		LEFT JOIN organizations o ON ap.organization_id = o.id
+		LEFT JOIN access_lists al ON ap.list_id = al.id
+		WHERE ap.plate_number ILIKE $1
+		ORDER BY ap.plate_number, ap.is_active DESC
+		LIMIT 10
+	`, query+"%")
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var plateNumber string
+		var isActive bool
+		var organizationName, listName, listColor sql.NullString
+
+		if err := rows.Scan(&plateNumber, &isActive, &organizationName, &listName, &listColor); err != nil {
+			continue
+		}
+
+		result := map[string]interface{}{
+			"plateNumber": plateNumber,
+			"isActive":    isActive,
+		}
+		if organizationName.Valid {
+			result["organizationName"] = organizationName.String
+		}
+		if listName.Valid {
+			result["listName"] = listName.String
+		}
+		if listColor.Valid {
+			result["listColor"] = listColor.String
+		}
+		results = append(results, result)
+	}
+
+	return results, nil
 }

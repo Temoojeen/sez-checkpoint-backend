@@ -27,7 +27,7 @@ type CreateUserRequest struct {
 	Email          *string `json:"email" binding:"omitempty,email"` // Изменено на указатель
 	Phone          *string `json:"phone"`                           // Изменено на указатель
 	OrganizationID *string `json:"organizationId"`
-	RoleID         int     `json:"roleId" binding:"required,min=1,max=5"`
+	RoleID         int     `json:"roleId" binding:"required,min=1,max=6"`
 }
 
 type UpdateUserRequest struct {

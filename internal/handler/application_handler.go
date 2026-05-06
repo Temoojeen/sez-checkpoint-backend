@@ -45,8 +45,8 @@ func (h *ApplicationHandler) Create(c *gin.Context) {
 		return
 	}
 
-	log.Printf("📝 Создание заявки: номер=%s, договор=%s, список=%s",
-		req.PlateNumber, req.ContractNumber, req.ListID)
+	log.Printf("📝 Создание заявки: номер=%s, договор=%s, список=%s, smartParking=%v",
+		req.PlateNumber, req.ContractNumber, req.ListID, req.SmartParking)
 
 	// Получаем ID текущего пользователя
 	userID, exists := c.Get("userID")
@@ -126,21 +126,17 @@ func (h *ApplicationHandler) Create(c *gin.Context) {
 		t, err := time.Parse("2006-01-02", req.ValidFrom)
 		if err == nil {
 			validFrom = &t
-		} else {
-			log.Printf("⚠️ Ошибка парсинга даты validFrom: %v", err)
 		}
 	}
 	if req.ValidUntil != "" {
 		t, err := time.Parse("2006-01-02", req.ValidUntil)
 		if err == nil {
 			validUntil = &t
-		} else {
-			log.Printf("⚠️ Ошибка парсинга даты validUntil: %v", err)
 		}
 	}
 
-	// Создаем заявку
-	application := &models.Application{
+	// Создаем заявку на КПП 1
+	applicationKPP := &models.Application{
 		ID:             uuid.New().String(),
 		PlateNumber:    req.PlateNumber,
 		VehicleBrand:   req.VehicleBrand,
@@ -151,6 +147,7 @@ func (h *ApplicationHandler) Create(c *gin.Context) {
 		ListID:         req.ListID,
 		ApplicantID:    userID.(string),
 		Status:         "pending",
+		Destination:    "kpp1",
 		ValidFrom:      validFrom,
 		ValidUntil:     validUntil,
 		Notes:          req.Notes,
@@ -158,22 +155,55 @@ func (h *ApplicationHandler) Create(c *gin.Context) {
 		UpdatedAt:      time.Now(),
 	}
 
-	log.Printf("📦 Создание объекта заявки: ID=%s, Plate=%s, Org=%s, List=%s",
-		application.ID, application.PlateNumber, *application.OrganizationID, application.ListID)
-
-	if err := h.appRepo.Create(application); err != nil {
-		log.Printf("❌ Ошибка при создании заявки: %v", err)
+	if err := h.appRepo.Create(applicationKPP); err != nil {
+		log.Printf("❌ Ошибка при создании заявки на КПП 1: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Не удалось создать заявку",
 		})
 		return
 	}
 
-	log.Printf("✅ Заявка успешно создана: ID=%s, номер=%s", application.ID, application.PlateNumber)
-	c.JSON(http.StatusCreated, gin.H{
-		"message":     "Заявка успешно создана",
-		"application": application,
-	})
+	log.Printf("✅ Заявка на КПП 1 создана: ID=%s, номер=%s", applicationKPP.ID, applicationKPP.PlateNumber)
+
+	// Если отмечен SmartParking, создаем вторую заявку
+	var applicationSP *models.Application
+	if req.SmartParking {
+		applicationSP = &models.Application{
+			ID:             uuid.New().String(),
+			PlateNumber:    req.PlateNumber,
+			VehicleBrand:   req.VehicleBrand,
+			VehicleModel:   req.VehicleModel,
+			VehicleColor:   req.VehicleColor,
+			ContractID:     &contract.ID,
+			OrganizationID: user.OrganizationID,
+			ListID:         req.ListID,
+			ApplicantID:    userID.(string),
+			Status:         "pending",
+			Destination:    "smartparking",
+			ValidFrom:      validFrom,
+			ValidUntil:     validUntil,
+			Notes:          req.Notes,
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
+		}
+
+		if err := h.appRepo.Create(applicationSP); err != nil {
+			log.Printf("❌ Ошибка при создании заявки на SmartParking: %v", err)
+			// Не возвращаем ошибку, так как заявка на КПП уже создана
+		} else {
+			log.Printf("✅ Заявка на SmartParking создана: ID=%s, номер=%s", applicationSP.ID, applicationSP.PlateNumber)
+		}
+	}
+
+	response := gin.H{
+		"message":        "Заявка успешно создана",
+		"applicationKPP": applicationKPP,
+	}
+	if applicationSP != nil {
+		response["applicationSP"] = applicationSP
+	}
+
+	c.JSON(http.StatusCreated, response)
 }
 
 // GetMyApplications - получает заявки текущего пользователя
@@ -194,11 +224,23 @@ func (h *ApplicationHandler) GetMyApplications(c *gin.Context) {
 	c.JSON(http.StatusOK, applications)
 }
 
-// GetPendingForOperator - получает заявки для оператора
+// GetPendingForOperator - получает заявки для оператора КПП 1
 func (h *ApplicationHandler) GetPendingForOperator(c *gin.Context) {
 	applications, err := h.appRepo.GetPendingForOperator()
 	if err != nil {
 		log.Printf("❌ Ошибка при получении заявок для оператора: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при получении заявок"})
+		return
+	}
+
+	c.JSON(http.StatusOK, applications)
+}
+
+// GetPendingForSmartParkingOperator - получает заявки для оператора SmartParking
+func (h *ApplicationHandler) GetPendingForSmartParkingOperator(c *gin.Context) {
+	applications, err := h.appRepo.GetPendingForSmartParkingOperator()
+	if err != nil {
+		log.Printf("❌ Ошибка при получении заявок для оператора SmartParking: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при получении заявок"})
 		return
 	}
@@ -218,7 +260,7 @@ func (h *ApplicationHandler) GetPendingForSupervisor(c *gin.Context) {
 	c.JSON(http.StatusOK, applications)
 }
 
-// OperatorApprove - одобрение оператором
+// OperatorApprove - одобрение оператором КПП 1
 func (h *ApplicationHandler) OperatorApprove(c *gin.Context) {
 	appID := c.Param("id")
 
@@ -228,20 +270,80 @@ func (h *ApplicationHandler) OperatorApprove(c *gin.Context) {
 		return
 	}
 
+	// Проверяем, что заявка предназначена для КПП 1
+	app, err := h.appRepo.GetByID(appID)
+	if err != nil {
+		log.Printf("❌ Заявка %s не найдена: %v", appID, err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Заявка не найдена"})
+		return
+	}
+
+	if app.Destination != "kpp1" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Эта заявка не для КПП 1"})
+		return
+	}
+
 	now := time.Now()
 	operatorIDStr := operatorID.(string)
 
-	log.Printf("🔐 Одобрение заявки %s оператором %s", appID, operatorIDStr)
+	log.Printf("🔐 Одобрение заявки КПП 1 %s оператором %s", appID, operatorIDStr)
 
-	err := h.appRepo.UpdateStatus(appID, "operator_approved", &operatorIDStr, nil, &now, nil, "")
+	err = h.appRepo.UpdateStatus(appID, "operator_approved", &operatorIDStr, nil, &now, nil, "")
 	if err != nil {
 		log.Printf("❌ Ошибка при одобрении заявки %s: %v", appID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при одобрении заявки"})
 		return
 	}
 
-	log.Printf("✅ Заявка %s одобрена оператором %s", appID, operatorIDStr)
+	log.Printf("✅ Заявка КПП 1 %s одобрена оператором %s", appID, operatorIDStr)
 	c.JSON(http.StatusOK, gin.H{"message": "Заявка одобрена оператором"})
+}
+
+// SmartParkingOperatorApprove - одобрение оператором SmartParking
+func (h *ApplicationHandler) SmartParkingOperatorApprove(c *gin.Context) {
+	appID := c.Param("id")
+
+	var req struct {
+		ParkingID int64 `json:"parkingId" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Не указан ID парковки"})
+		return
+	}
+
+	operatorID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Не авторизован"})
+		return
+	}
+
+	// Проверяем, что заявка предназначена для SmartParking
+	app, err := h.appRepo.GetByID(appID)
+	if err != nil {
+		log.Printf("❌ Заявка %s не найдена: %v", appID, err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Заявка не найдена"})
+		return
+	}
+
+	if app.Destination != "smartparking" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Эта заявка не для SmartParking"})
+		return
+	}
+
+	operatorIDStr := operatorID.(string)
+	log.Printf("🔐 Одобрение заявки SmartParking %s оператором %s, parkingId=%d", appID, operatorIDStr, req.ParkingID)
+
+	// Удаляем заявку
+	if err := h.appRepo.HardDelete(appID); err != nil {
+		log.Printf("❌ Ошибка при удалении заявки %s: %v", appID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при удалении заявки"})
+		return
+	}
+
+	log.Printf("✅ Заявка SmartParking %s одобрена, номер %s отправлен в Parqour, заявка удалена",
+		appID, app.PlateNumber)
+
 }
 
 // SupervisorApprove - одобрение руководителем
@@ -329,7 +431,7 @@ func (h *ApplicationHandler) SupervisorApprove(c *gin.Context) {
 	})
 }
 
-// Reject - отклонение заявки
+// Reject - отклонение заявки оператором КПП 1
 func (h *ApplicationHandler) Reject(c *gin.Context) {
 	appID := c.Param("id")
 
@@ -581,4 +683,130 @@ func (h *ApplicationHandler) GetByID(c *gin.Context) {
 
 	log.Printf("✅ Заявка %s успешно получена", appID)
 	c.JSON(http.StatusOK, application)
+}
+
+// AdminDeleteApplication - удаление заявки (только для админа)
+func (h *ApplicationHandler) AdminDeleteApplication(c *gin.Context) {
+	appID := c.Param("id")
+
+	// Проверяем права администратора
+	currentUserRole, exists := c.Get("roleID")
+	if !exists || currentUserRole != 1 {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Недостаточно прав"})
+		return
+	}
+
+	adminID, _ := c.Get("userID")
+	adminIDStr := adminID.(string)
+
+	log.Printf("🗑️ Администратор %s удаляет заявку %s", adminIDStr, appID)
+
+	// Получаем информацию о заявке перед удалением
+	app, err := h.appRepo.GetByID(appID)
+	if err != nil {
+		log.Printf("❌ Заявка %s не найдена: %v", appID, err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Заявка не найдена"})
+		return
+	}
+
+	// Удаляем заявку
+	if err := h.appRepo.HardDelete(appID); err != nil {
+		log.Printf("❌ Ошибка при удалении заявки %s: %v", appID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при удалении заявки"})
+		return
+	}
+
+	log.Printf("✅ Администратор %s удалил заявку %s (номер %s)", adminIDStr, appID, app.PlateNumber)
+	c.JSON(http.StatusOK, gin.H{"message": "Заявка успешно удалена"})
+}
+
+// SupervisorReject - отклонение заявки руководителем (для заявок в статусе operator_approved)
+func (h *ApplicationHandler) SupervisorReject(c *gin.Context) {
+	appID := c.Param("id")
+
+	var req struct {
+		Reason string `json:"reason"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		req.Reason = "Отклонено руководителем"
+	}
+
+	supervisorID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Не авторизован"})
+		return
+	}
+
+	supervisorIDStr := supervisorID.(string)
+
+	log.Printf("🔐 Руководитель %s отклоняет заявку %s, причина: %s", supervisorIDStr, appID, req.Reason)
+
+	// Получаем информацию о заявке
+	app, err := h.appRepo.GetByID(appID)
+	if err != nil {
+		log.Printf("❌ Заявка %s не найдена: %v", appID, err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Заявка не найдена"})
+		return
+	}
+
+	// Проверяем, что заявка в статусе operator_approved
+	if app.Status != "operator_approved" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Можно отклонить только заявки, одобренные оператором",
+		})
+		return
+	}
+
+	// Отклоняем заявку
+	err = h.appRepo.UpdateStatus(appID, "rejected", nil, &supervisorIDStr, nil, nil, req.Reason)
+	if err != nil {
+		log.Printf("❌ Ошибка при отклонении заявки %s: %v", appID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при отклонении заявки"})
+		return
+	}
+
+	log.Printf("✅ Заявка %s отклонена руководителем %s", appID, supervisorIDStr)
+	c.JSON(http.StatusOK, gin.H{"message": "Заявка отклонена"})
+}
+
+// DeleteSmartParkingApplication - удаление заявки оператором SmartParking
+func (h *ApplicationHandler) DeleteSmartParkingApplication(c *gin.Context) {
+	appID := c.Param("id")
+	if appID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID заявки не указан"})
+		return
+	}
+
+	operatorID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Не авторизован"})
+		return
+	}
+
+	log.Printf("🗑️ Оператор SmartParking %s удаляет заявку %s", operatorID, appID)
+
+	// Получаем заявку
+	app, err := h.appRepo.GetByID(appID)
+	if err != nil {
+		log.Printf("❌ Заявка %s не найдена: %v", appID, err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Заявка не найдена"})
+		return
+	}
+
+	// Проверяем, что заявка предназначена для SmartParking
+	if app.Destination != "smartparking" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Эта заявка не для SmartParking"})
+		return
+	}
+
+	// Удаляем заявку
+	if err := h.appRepo.HardDelete(appID); err != nil {
+		log.Printf("❌ Ошибка при удалении заявки %s: %v", appID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при удалении заявки"})
+		return
+	}
+
+	log.Printf("✅ Оператор SmartParking %s удалил заявку %s (номер %s)", operatorID, appID, app.PlateNumber)
+	c.JSON(http.StatusOK, gin.H{"message": "Заявка успешно удалена"})
 }

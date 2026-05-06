@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log"
 	"net/http"
 	"time"
 
@@ -278,4 +279,29 @@ func (h *SecurityHandler) GetAllLogs(c *gin.Context) {
 			"to":   toTime.Format("2006-01-02"),
 		},
 	})
+}
+
+// SearchPlates - поиск номеров по частичному совпадению
+func (h *SecurityHandler) SearchPlates(c *gin.Context) {
+	query := c.Query("q")
+	if query == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Не указан поисковый запрос"})
+		return
+	}
+
+	if len(query) < 3 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Минимум 3 символа для поиска"})
+		return
+	}
+
+	log.Printf("🔍 Поиск номеров по запросу: %s", query)
+
+	plates, err := h.approvedRepo.SearchByPartialPlate(query)
+	if err != nil {
+		log.Printf("❌ Ошибка при поиске номеров: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при поиске номеров"})
+		return
+	}
+
+	c.JSON(http.StatusOK, plates)
 }
