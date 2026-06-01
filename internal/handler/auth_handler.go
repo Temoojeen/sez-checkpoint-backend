@@ -108,8 +108,16 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 // generateToken - создает JWT токен
 func (h *AuthHandler) generateToken(user *models.User) (string, error) {
-	// Устанавливаем время жизни токена - 24 часа
-	expirationTime := time.Now().Add(24 * time.Hour)
+	// Устанавливаем время жизни токена
+	var expirationTime time.Time
+
+	if user.RoleID == 5 {
+		// Для охраны - бессрочный токен (10 лет)
+		expirationTime = time.Now().Add(10 * 365 * 24 * time.Hour)
+	} else {
+		// Для остальных - 24 часа
+		expirationTime = time.Now().Add(24 * time.Hour)
+	}
 
 	claims := jwt.MapClaims{
 		"user_id":  user.ID,

@@ -3,6 +3,7 @@ package repository
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"sez-checkpoint-backend/internal/models"
@@ -183,4 +184,81 @@ func (r *AccessListRepository) GetListsWithPermissions() ([]map[string]interface
 		lists = append(lists, list)
 	}
 	return lists, nil
+}
+
+// GetByName - получает список по имени
+func (r *AccessListRepository) GetByName(name string) (*models.AccessList, error) {
+	list := &models.AccessList{}
+	query := `
+        SELECT 
+            id, name, description, color, priority, 
+            is_active, created_by, created_at, updated_at
+        FROM access_lists 
+        WHERE name = $1 AND is_active = true
+    `
+	err := r.db.QueryRow(query, name).Scan(
+		&list.ID, &list.Name, &list.Description, &list.Color,
+		&list.Priority, &list.IsActive, &list.CreatedBy, &list.CreatedAt, &list.UpdatedAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, errors.New("список не найден")
+	}
+	return list, err
+}
+
+// CheckExistsInList - проверяет существует ли номер в конкретном списке
+func (r *ApprovedPlateRepository) CheckExistsInList(plateNumber, listID string) (bool, error) {
+	var exists bool
+	query := `
+        SELECT EXISTS(
+            SELECT 1 FROM approved_plates 
+            WHERE plate_number = $1 AND list_id = $2
+        )
+    `
+	err := r.db.QueryRow(query, plateNumber, listID).Scan(&exists)
+	return exists, err
+}
+
+// HardDelete - полное удаление списка и всех связанных номеров из базы данных
+func (r *AccessListRepository) HardDelete(id string) error {
+	// Начинаем транзакцию
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Сначала удаляем все номера из этого списка
+	_, err = tx.Exec(`DELETE FROM approved_plates WHERE list_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("ошибка удаления номеров списка: %v", err)
+	}
+
+	// Удаляем права пользователей на этот список
+	_, err = tx.Exec(`DELETE FROM user_list_permissions WHERE list_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("ошибка удаления прав на список: %v", err)
+	}
+
+	// Удаляем сам список
+	result, err := tx.Exec(`DELETE FROM access_lists WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("ошибка удаления списка: %v", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return errors.New("список не найден")
+	}
+
+	// Фиксируем транзакцию
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("ошибка при коммите транзакции: %v", err)
+	}
+
+	return nil
 }

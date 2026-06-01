@@ -1039,3 +1039,19 @@ func (h *AdminHandler) UpdateApprovedPlate(c *gin.Context) {
 	log.Printf("✅ Номер %s успешно обновлен", id)
 	c.JSON(http.StatusOK, plate)
 }
+
+// HardDeleteAccessList - полное удаление списка из базы данных
+func (h *AdminHandler) HardDeleteAccessList(c *gin.Context) {
+	id := c.Param("id")
+
+	log.Printf("🗑️ Полное удаление списка доступа: %s", id)
+
+	if err := h.accessListRepo.HardDelete(id); err != nil {
+		log.Printf("❌ Ошибка при удалении списка: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при удалении списка"})
+		return
+	}
+
+	log.Printf("✅ Список доступа %s полностью удален", id)
+	c.JSON(http.StatusOK, gin.H{"message": "Список полностью удален"})
+}

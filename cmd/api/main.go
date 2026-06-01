@@ -96,6 +96,10 @@ func main() {
 	// Создаем хендлер для удаленных номеров
 	deletedPlateHandler := handler.NewDeletedPlateHandler(deletedPlateRepo)
 
+	// В функции main, после создания approvedPlateRepo
+	// Создаем ImportHandler
+	importHandler := handler.NewImportHandler(approvedPlateRepo, accessListRepo)
+
 	// Настраиваем роутер
 	router := setupRouter(
 		authHandler,
@@ -107,6 +111,7 @@ func main() {
 		anprHandler,
 		deletedPlateHandler,
 		wsHub,
+		importHandler,
 	)
 
 	// Запускаем сервер
@@ -524,15 +529,29 @@ func setupRouter(
 	anprHandler *handler.ANPRHandler,
 	deletedPlateHandler *handler.DeletedPlateHandler,
 	wsHub *websocket.Hub,
+	importHandler *handler.ImportHandler,
 ) *gin.Engine {
 	router := gin.Default()
 
 	// Настройка CORS
 	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000", "http://localhost:3001", "http://10.24.32.31:3000"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept", "X-Requested-With"},
-		ExposeHeaders:    []string{"Content-Length", "Content-Type"},
+		AllowOrigins: []string{
+			"http://localhost:3000",
+			"http://localhost:3001",
+			"http://10.24.32.31:3000",
+			"http://10.8.10.200:3000",
+			"http://kpp1.sezkhorgos.kz",
+			"http://2.133.148.149",
+		},
+		AllowMethods: []string{
+			"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS",
+		},
+		AllowHeaders: []string{
+			"Origin", "Content-Type", "Authorization", "Accept", "X-Requested-With",
+		},
+		ExposeHeaders: []string{
+			"Content-Length", "Content-Type",
+		},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
@@ -591,6 +610,7 @@ func setupRouter(
 		api.GET("/applications/:id", applicationHandler.GetByID)
 
 		// Маршруты для админа (roleId = 1)
+		// Маршруты для админа (roleId = 1)
 		admin := api.Group("/admin")
 		admin.Use(middleware.RoleMiddleware(1))
 		{
@@ -624,7 +644,7 @@ func setupRouter(
 			admin.PUT("/access-lists/:id", adminHandler.UpdateAccessList)
 			admin.DELETE("/access-lists/:id", adminHandler.DeleteAccessList)
 			admin.GET("/access-logs", securityHandler.GetAllLogs)
-
+			admin.DELETE("/access-lists/:id/hard", adminHandler.HardDeleteAccessList)
 			// Права пользователей на списки
 			admin.POST("/users/:id/list-permissions", adminHandler.AddListPermission)
 			admin.GET("/users/:id/list-permissions", adminHandler.GetUserListPermissions)
@@ -637,6 +657,9 @@ func setupRouter(
 			admin.DELETE("/approved-plates/:id", adminHandler.RemoveApprovedPlate)
 			admin.PUT("/approved-plates/:id", adminHandler.UpdateApprovedPlate)
 
+			// Импорт номеров из Excel
+			admin.POST("/import-plates", importHandler.ImportPlatesFromExcel)
+
 			// Удаленные номера
 			admin.GET("/deleted-plates", deletedPlateHandler.GetAll)
 
@@ -647,7 +670,7 @@ func setupRouter(
 			admin.PUT("/applications/:id/approve-as-supervisor", applicationHandler.AdminApproveAsSupervisor)
 			admin.PUT("/applications/:id/reject", applicationHandler.AdminReject)
 
-			// Статистика
+			// Статистика (только один раз)
 			admin.GET("/dashboard/stats", adminHandler.GetDashboardStats)
 		}
 

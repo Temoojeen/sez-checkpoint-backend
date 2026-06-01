@@ -120,6 +120,16 @@ func (h *ApplicationHandler) Create(c *gin.Context) {
 	}
 	log.Printf("✅ Права на список подтверждены")
 
+	// Проверяем, существует ли уже активный номер в этом списке
+	existingPlate, err := h.approvedRepo.GetByPlateNumberAndListIncludeInactive(req.PlateNumber, req.ListID)
+	if err == nil && existingPlate != nil && existingPlate.IsActive {
+		log.Printf("❌ Номер %s уже существует в списке %s", req.PlateNumber, req.ListID)
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "Данный номер уже есть в списке пропусков",
+		})
+		return
+	}
+
 	// Парсим даты
 	var validFrom, validUntil *time.Time
 	if req.ValidFrom != "" {
