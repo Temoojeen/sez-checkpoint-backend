@@ -1055,3 +1055,24 @@ func (h *AdminHandler) HardDeleteAccessList(c *gin.Context) {
 	log.Printf("✅ Список доступа %s полностью удален", id)
 	c.JSON(http.StatusOK, gin.H{"message": "Список полностью удален"})
 }
+
+// HardDeleteUser - полное удаление пользователя
+func (h *AdminHandler) HardDeleteUser(c *gin.Context) {
+	id := c.Param("id")
+
+	// Нельзя удалить самого себя
+	adminID, _ := c.Get("userID")
+	if id == adminID.(string) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Нельзя удалить самого себя"})
+		return
+	}
+
+	if err := h.userRepo.HardDelete(id); err != nil {
+		log.Printf("❌ Ошибка при удалении пользователя: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при удалении пользователя"})
+		return
+	}
+
+	log.Printf("✅ Пользователь %s полностью удален", id)
+	c.JSON(http.StatusOK, gin.H{"message": "Пользователь полностью удален"})
+}

@@ -649,6 +649,7 @@ func setupRouter(
 			admin.POST("/users/:id/list-permissions", adminHandler.AddListPermission)
 			admin.GET("/users/:id/list-permissions", adminHandler.GetUserListPermissions)
 			admin.DELETE("/users/:id/list-permissions/:listId", adminHandler.RemoveListPermission)
+			admin.DELETE("/users/:id/hard", adminHandler.HardDeleteUser)
 
 			// Управление утвержденными номерами
 			admin.POST("/approved-plates/direct", adminHandler.AddDirectPlate)

@@ -3,6 +3,7 @@ package repository
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -356,10 +357,67 @@ func (r *UserRepository) Delete(id string) error {
 
 // HardDelete - полное удаление пользователя из БД (только для админов)
 func (r *UserRepository) HardDelete(id string) error {
-	query := `DELETE FROM users WHERE id = $1`
-	result, err := r.db.Exec(query, id)
+	// Начинаем транзакцию
+	tx, err := r.db.Begin()
 	if err != nil {
 		return err
+	}
+	defer tx.Rollback()
+
+	// 1. Обновляем deleted_plates - отвязываем удаленные номера от пользователя
+	_, err = tx.Exec(`UPDATE deleted_plates SET deleted_by = NULL WHERE deleted_by = $1`, id)
+	if err != nil {
+		return fmt.Errorf("ошибка обновления deleted_plates: %v", err)
+	}
+
+	// 2. Обновляем approved_plates - отвязываем утвержденные номера
+	_, err = tx.Exec(`UPDATE approved_plates SET approved_by = NULL WHERE approved_by = $1`, id)
+	if err != nil {
+		return fmt.Errorf("ошибка обновления approved_plates: %v", err)
+	}
+
+	// 3. Обновляем access_lists - отвязываем списки
+	_, err = tx.Exec(`UPDATE access_lists SET created_by = NULL WHERE created_by = $1`, id)
+	if err != nil {
+		return fmt.Errorf("ошибка обновления access_lists: %v", err)
+	}
+
+	// 4. Обновляем contracts - отвязываем договоры
+	_, err = tx.Exec(`UPDATE contracts SET created_by = NULL WHERE created_by = $1`, id)
+	if err != nil {
+		return fmt.Errorf("ошибка обновления contracts: %v", err)
+	}
+
+	// 5. Обновляем users - отвязываем созданных пользователей
+	_, err = tx.Exec(`UPDATE users SET created_by = NULL WHERE created_by = $1`, id)
+	if err != nil {
+		return fmt.Errorf("ошибка обновления users: %v", err)
+	}
+
+	// 6. Удаляем права на списки
+	_, err = tx.Exec(`DELETE FROM user_list_permissions WHERE user_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("ошибка удаления прав на списки: %v", err)
+	}
+
+	// 7. Обновляем applications - отвязываем заявки
+	_, err = tx.Exec(`UPDATE applications SET applicant_id = NULL WHERE applicant_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("ошибка обновления заявок: %v", err)
+	}
+	_, err = tx.Exec(`UPDATE applications SET operator_id = NULL WHERE operator_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("ошибка обновления заявок (operator): %v", err)
+	}
+	_, err = tx.Exec(`UPDATE applications SET supervisor_id = NULL WHERE supervisor_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("ошибка обновления заявок (supervisor): %v", err)
+	}
+
+	// 8. Удаляем самого пользователя
+	result, err := tx.Exec(`DELETE FROM users WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("ошибка удаления пользователя: %v", err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
@@ -369,6 +427,12 @@ func (r *UserRepository) HardDelete(id string) error {
 	if rowsAffected == 0 {
 		return errors.New("пользователь не найден")
 	}
+
+	// Фиксируем транзакцию
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("ошибка при коммите транзакции: %v", err)
+	}
+
 	return nil
 }
 

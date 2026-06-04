@@ -3,6 +3,7 @@ package repository
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"sez-checkpoint-backend/internal/models"
@@ -132,25 +133,49 @@ func (r *OrganizationRepository) Update(org *models.Organization) error {
 	return nil
 }
 
-// Delete - удаляет организацию
+// Delete - удаляет организацию и все связанные данные
 func (r *OrganizationRepository) Delete(id string) error {
-	// Проверяем, есть ли связанные записи
-	var count int
-	err := r.db.QueryRow(`
-        SELECT COUNT(*) FROM users WHERE organization_id = $1
-    `, id).Scan(&count)
+	// Начинаем транзакцию
+	tx, err := r.db.Begin()
 	if err != nil {
 		return err
 	}
+	defer tx.Rollback()
 
-	if count > 0 {
-		return errors.New("нельзя удалить организацию, у которой есть пользователи")
+	// 1. Удаляем все номера организации из approved_plates
+	_, err = tx.Exec(`DELETE FROM approved_plates WHERE organization_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("ошибка удаления номеров организации: %v", err)
 	}
 
-	query := `DELETE FROM organizations WHERE id = $1`
-	result, err := r.db.Exec(query, id)
+	// 2. Отвязываем deleted_plates от организации
+	_, err = tx.Exec(`UPDATE deleted_plates SET organization_id = NULL WHERE organization_id = $1`, id)
 	if err != nil {
-		return err
+		return fmt.Errorf("ошибка обновления deleted_plates: %v", err)
+	}
+
+	// 3. Удаляем все заявки организации
+	_, err = tx.Exec(`DELETE FROM applications WHERE organization_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("ошибка удаления заявок организации: %v", err)
+	}
+
+	// 4. Удаляем договоры организации
+	_, err = tx.Exec(`DELETE FROM contracts WHERE organization_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("ошибка удаления договоров организации: %v", err)
+	}
+
+	// 5. Отвязываем пользователей от организации (ставим NULL)
+	_, err = tx.Exec(`UPDATE users SET organization_id = NULL WHERE organization_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("ошибка отвязки пользователей: %v", err)
+	}
+
+	// 6. Удаляем саму организацию
+	result, err := tx.Exec(`DELETE FROM organizations WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("ошибка удаления организации: %v", err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
@@ -160,6 +185,12 @@ func (r *OrganizationRepository) Delete(id string) error {
 	if rowsAffected == 0 {
 		return errors.New("организация не найдена")
 	}
+
+	// Фиксируем транзакцию
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("ошибка при коммите транзакции: %v", err)
+	}
+
 	return nil
 }
 

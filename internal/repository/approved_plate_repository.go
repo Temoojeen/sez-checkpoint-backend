@@ -447,6 +447,11 @@ func (r *ApprovedPlateRepository) GetByID(id string) (*models.ApprovedPlate, err
 // GetByPlateNumberIncludeInactive - ищет номер в утвержденном списке (включая неактивные)
 func (r *ApprovedPlateRepository) GetByPlateNumberIncludeInactive(plateNumber string) (*models.ApprovedPlate, error) {
 	plate := &models.ApprovedPlate{}
+	var organizationName, listName, listType, listColor sql.NullString
+	var contractID, organizationID, applicationID, approvedBy sql.NullString
+	var validFrom, validUntil sql.NullTime
+	var notes sql.NullString
+
 	query := `
         SELECT 
             ap.id, ap.plate_number, ap.vehicle_brand, ap.vehicle_model, ap.vehicle_color,
@@ -465,16 +470,58 @@ func (r *ApprovedPlateRepository) GetByPlateNumberIncludeInactive(plateNumber st
     `
 	err := r.db.QueryRow(query, plateNumber).Scan(
 		&plate.ID, &plate.PlateNumber, &plate.VehicleBrand, &plate.VehicleModel, &plate.VehicleColor,
-		&plate.ContractID, &plate.OrganizationID, &plate.ListID, &plate.ApplicationID,
-		&plate.ApprovedBy, &plate.ValidFrom, &plate.ValidUntil, &plate.IsActive, &plate.Notes,
+		&contractID, &organizationID, &plate.ListID, &applicationID,
+		&approvedBy, &validFrom, &validUntil, &plate.IsActive, &notes,
 		&plate.CreatedAt, &plate.UpdatedAt,
-		&plate.OrganizationName, &plate.ListName, &plate.ListType, &plate.ListColor,
+		&organizationName, &listName, &listType, &listColor,
 	)
 
 	if err == sql.ErrNoRows {
 		return nil, errors.New("номер не найден в списке пропусков")
 	}
-	return plate, err
+	if err != nil {
+		return nil, err
+	}
+
+	// Конвертируем NULL значения
+	if contractID.Valid {
+		plate.ContractID = &contractID.String
+	}
+	if organizationID.Valid {
+		plate.OrganizationID = &organizationID.String
+	} else {
+		plate.OrganizationID = nil
+	}
+	if applicationID.Valid {
+		plate.ApplicationID = &applicationID.String
+	}
+	if approvedBy.Valid {
+		plate.ApprovedBy = &approvedBy.String
+	}
+	if validFrom.Valid {
+		plate.ValidFrom = &validFrom.Time
+	}
+	if validUntil.Valid {
+		plate.ValidUntil = &validUntil.Time
+	}
+	if notes.Valid {
+		plate.Notes = notes.String
+	}
+	if organizationName.Valid {
+		plate.OrganizationName = organizationName.String
+	}
+	// Если organizationName не валидный, оставляем пустую строку
+	if listName.Valid {
+		plate.ListName = listName.String
+	}
+	if listType.Valid {
+		plate.ListType = listType.String
+	}
+	if listColor.Valid {
+		plate.ListColor = listColor.String
+	}
+
+	return plate, nil
 }
 
 // SearchByPartialPlate - поиск номеров по частичному совпадению
