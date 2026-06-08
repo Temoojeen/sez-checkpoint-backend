@@ -130,6 +130,17 @@ func (h *ApplicationHandler) Create(c *gin.Context) {
 		return
 	}
 
+	// Проверяем, нет ли уже активной заявки с таким номером у этого пользователя
+	existingApp, err := h.appRepo.GetActiveApplicationByPlateAndList(req.PlateNumber, req.ListID, userID.(string))
+	if err == nil && existingApp != nil {
+		log.Printf("❌ У пользователя %s уже есть активная заявка %s с номером %s в списке %s",
+			userID, existingApp.ID, req.PlateNumber, req.ListID)
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "У вас уже есть заявка с данным номером",
+		})
+		return
+	}
+
 	// Парсим даты
 	var validFrom, validUntil *time.Time
 	if req.ValidFrom != "" {
@@ -818,5 +829,46 @@ func (h *ApplicationHandler) DeleteSmartParkingApplication(c *gin.Context) {
 	}
 
 	log.Printf("✅ Оператор SmartParking %s удалил заявку %s (номер %s)", operatorID, appID, app.PlateNumber)
+	c.JSON(http.StatusOK, gin.H{"message": "Заявка успешно удалена"})
+}
+
+// DeleteByParticipant - удаление заявки участником (только свои и только pending)
+func (h *ApplicationHandler) DeleteByParticipant(c *gin.Context) {
+	appID := c.Param("id")
+
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Не авторизован"})
+		return
+	}
+
+	// Получаем заявку
+	app, err := h.appRepo.GetByID(appID)
+	if err != nil {
+		log.Printf("❌ Заявка %s не найдена: %v", appID, err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Заявка не найдена"})
+		return
+	}
+
+	// Проверяем, что заявка принадлежит пользователю
+	if app.ApplicantID != userID.(string) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Нет прав на удаление этой заявки"})
+		return
+	}
+
+	// Проверяем, что заявка в статусе pending
+	if app.Status != "pending" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Можно удалить только заявки в статусе ожидания"})
+		return
+	}
+
+	// Удаляем заявку
+	if err := h.appRepo.HardDelete(appID); err != nil {
+		log.Printf("❌ Ошибка при удалении заявки %s: %v", appID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при удалении заявки"})
+		return
+	}
+
+	log.Printf("✅ Участник %s удалил заявку %s (номер %s)", userID, appID, app.PlateNumber)
 	c.JSON(http.StatusOK, gin.H{"message": "Заявка успешно удалена"})
 }

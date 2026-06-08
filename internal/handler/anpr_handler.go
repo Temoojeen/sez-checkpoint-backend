@@ -146,7 +146,7 @@ func (h *ANPRHandler) HandleCameraEvent(c *gin.Context) {
 	var message string
 
 	if h.approvedPlateRepo != nil && plateNumber != "" {
-		plate, err := h.approvedPlateRepo.GetByPlateNumberIncludeInactive(plateNumber)
+		plate, err := h.approvedPlateRepo.FindSimilarPlate(plateNumber)
 		if err == nil && plate != nil {
 			// Проверяем активность
 			isActive := plate.IsActive

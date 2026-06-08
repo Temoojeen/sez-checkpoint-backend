@@ -524,7 +524,6 @@ func (r *ApprovedPlateRepository) GetByPlateNumberIncludeInactive(plateNumber st
 	return plate, nil
 }
 
-// SearchByPartialPlate - поиск номеров по частичному совпадению
 func (r *ApprovedPlateRepository) SearchByPartialPlate(query string) ([]map[string]interface{}, error) {
 	rows, err := r.db.Query(`
 		SELECT DISTINCT ON (ap.plate_number)
@@ -539,7 +538,7 @@ func (r *ApprovedPlateRepository) SearchByPartialPlate(query string) ([]map[stri
 		WHERE ap.plate_number ILIKE $1
 		ORDER BY ap.plate_number, ap.is_active DESC
 		LIMIT 10
-	`, query+"%")
+	`, "%"+query+"%") // <-- изменил на %query% вместо query%
 
 	if err != nil {
 		return nil, err
@@ -573,4 +572,96 @@ func (r *ApprovedPlateRepository) SearchByPartialPlate(query string) ([]map[stri
 	}
 
 	return results, nil
+}
+
+// FindSimilarPlate - ищет похожий номер (с разницей в 1 символ)
+func (r *ApprovedPlateRepository) FindSimilarPlate(plateNumber string) (*models.ApprovedPlate, error) {
+	// Сначала ищем точное совпадение
+	plate, err := r.GetByPlateNumberIncludeInactive(plateNumber)
+	if err == nil {
+		return plate, nil
+	}
+
+	// Получаем все номера с такой же длиной ±1
+	length := len(plateNumber)
+	rows, err := r.db.Query(`
+		SELECT DISTINCT plate_number
+		FROM approved_plates
+		WHERE is_active = true
+		  AND LENGTH(plate_number) BETWEEN $1 AND $2
+		LIMIT 100
+	`, length-1, length+1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var bestMatch string
+	bestDistance := 999
+
+	for rows.Next() {
+		var candidate string
+		if err := rows.Scan(&candidate); err != nil {
+			continue
+		}
+
+		distance := levenshteinDistance(plateNumber, candidate)
+		if distance < bestDistance && distance <= 2 { // Максимум 2 отличия
+			bestDistance = distance
+			bestMatch = candidate
+		}
+	}
+
+	if bestMatch != "" {
+		log.Printf("🔍 Найдено похожее совпадение: '%s' -> '%s' (расстояние: %d)", plateNumber, bestMatch, bestDistance)
+		return r.GetByPlateNumberIncludeInactive(bestMatch)
+	}
+
+	return nil, errors.New("номер не найден")
+}
+
+// levenshteinDistance - вычисляет расстояние Левенштейна между двумя строками
+func levenshteinDistance(s1, s2 string) int {
+	if len(s1) == 0 {
+		return len(s2)
+	}
+	if len(s2) == 0 {
+		return len(s1)
+	}
+
+	// Создаем матрицу
+	matrix := make([][]int, len(s1)+1)
+	for i := range matrix {
+		matrix[i] = make([]int, len(s2)+1)
+		matrix[i][0] = i
+	}
+	for j := 0; j <= len(s2); j++ {
+		matrix[0][j] = j
+	}
+
+	for i := 1; i <= len(s1); i++ {
+		for j := 1; j <= len(s2); j++ {
+			cost := 1
+			if s1[i-1] == s2[j-1] {
+				cost = 0
+			}
+			matrix[i][j] = min(
+				matrix[i-1][j]+1,
+				matrix[i][j-1]+1,
+				matrix[i-1][j-1]+cost,
+			)
+		}
+	}
+
+	return matrix[len(s1)][len(s2)]
+}
+
+func min(a, b, c int) int {
+	if a < b && a < c {
+		return a
+	}
+	if b < c {
+		return b
+	}
+	return c
 }

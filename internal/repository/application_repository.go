@@ -996,3 +996,25 @@ func (r *ApplicationRepository) HardDelete(id string) error {
 	}
 	return nil
 }
+
+// GetActiveApplicationByPlateAndList - проверяет, есть ли активная заявка с таким номером у пользователя
+func (r *ApplicationRepository) GetActiveApplicationByPlateAndList(plateNumber, listID, applicantID string) (*models.Application, error) {
+	app := &models.Application{}
+	query := `
+		SELECT id, plate_number, status, list_id, applicant_id
+		FROM applications 
+		WHERE plate_number = $1 
+		  AND list_id = $2 
+		  AND applicant_id = $3
+		  AND status IN ('pending', 'operator_approved')
+		LIMIT 1
+	`
+	err := r.db.QueryRow(query, plateNumber, listID, applicantID).Scan(
+		&app.ID, &app.PlateNumber, &app.Status, &app.ListID, &app.ApplicantID,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, errors.New("активная заявка не найдена")
+	}
+	return app, err
+}

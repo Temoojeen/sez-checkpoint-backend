@@ -585,6 +585,7 @@ func setupRouter(
 		// Маршруты для участника (roleId = 4)
 		api.POST("/applications", middleware.RoleMiddleware(4), applicationHandler.Create)
 		api.GET("/applications/my", middleware.RoleMiddleware(4), applicationHandler.GetMyApplications)
+		api.DELETE("/applications/:id", middleware.RoleMiddleware(4), applicationHandler.DeleteByParticipant)
 
 		// Маршруты для оператора КПП 1 (roleId = 2)
 		api.GET("/applications/pending-operator", middleware.RoleMiddleware(2), applicationHandler.GetPendingForOperator)

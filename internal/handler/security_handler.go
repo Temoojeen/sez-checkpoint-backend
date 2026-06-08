@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"sez-checkpoint-backend/internal/models" // Этот импорт должен быть
+	"sez-checkpoint-backend/internal/models"
 	"sez-checkpoint-backend/internal/repository"
 )
 
@@ -53,12 +53,11 @@ func (h *SecurityHandler) CheckPlate(c *gin.Context) {
 		return
 	}
 
-	// Ищем номер в утвержденных (включая неактивные)
+	log.Printf("🔍 Проверка номера: '%s'", plateNumber)
+
 	plate, err := h.approvedRepo.GetByPlateNumberIncludeInactive(plateNumber)
 	if err != nil {
-		// Логируем попытку проезда с неразрешенным номером
-		h.logAccessAttempt(plateNumber, false, "")
-
+		log.Printf("❌ Номер '%s' не найден: %v", plateNumber, err)
 		c.JSON(http.StatusOK, models.CheckPlateResponse{
 			Exists:  false,
 			Message: "Номер не найден в списке пропусков",
@@ -66,13 +65,15 @@ func (h *SecurityHandler) CheckPlate(c *gin.Context) {
 		return
 	}
 
-	// Проверяем, активен ли номер
+	log.Printf("✅ Номер найден: %+v", plate)
+	log.Printf("   OrganizationName: '%s'", plate.OrganizationName)
+	log.Printf("   ListName: '%s'", plate.ListName)
+
 	isActive := plate.IsActive
 	if plate.ValidUntil != nil && plate.ValidUntil.Before(time.Now()) {
 		isActive = false
 	}
 
-	// Логируем попытку проезда
 	go h.logAccessAttempt(plateNumber, isActive, plate.ListName)
 
 	if !isActive {
@@ -117,7 +118,6 @@ func (h *SecurityHandler) LogAccess(c *gin.Context) {
 		return
 	}
 
-	// Проверяем номер в списке пропусков
 	plate, err := h.approvedRepo.GetByPlateNumber(req.PlateNumber)
 	accessGranted := err == nil
 
@@ -133,7 +133,6 @@ func (h *SecurityHandler) LogAccess(c *gin.Context) {
 		CreatedAt:        time.Now(),
 	}
 
-	// Если номер найден, используем данные из БД
 	if accessGranted {
 		log.OrganizationName = plate.OrganizationName
 		log.ListName = plate.ListName
@@ -159,27 +158,21 @@ func (h *SecurityHandler) logAccessAttempt(plateNumber string, granted bool, lis
 		CreatedAt:     time.Now(),
 	}
 
-	// Асинхронно сохраняем в БД
 	go h.accessLogRepo.Create(log)
 }
 
-// internal/handler/security_handler.go - исправляем GetStatistics
-
 // GetStatistics - получает статистику проездов (только за сегодня)
 func (h *SecurityHandler) GetStatistics(c *gin.Context) {
-	// Получаем начало и конец сегодняшнего дня
 	now := time.Now()
 	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	endOfDay := startOfDay.Add(24 * time.Hour).Add(-time.Second)
 
-	// Получаем логи за сегодня
 	logs, err := h.accessLogRepo.GetByDateRange(startOfDay, endOfDay)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при получении статистики"})
 		return
 	}
 
-	// Считаем статистику
 	total := len(logs)
 	granted := 0
 	denied := 0
@@ -224,20 +217,15 @@ func (h *SecurityHandler) GetLogsByPlate(c *gin.Context) {
 	c.JSON(http.StatusOK, logs)
 }
 
-// internal/handler/security_handler.go - добавить метод
-
-// internal/handler/security_handler.go - обновляем метод GetAllLogs
-
 // GetAllLogs - получает все логи с фильтрацией по датам и номеру (для админа)
 func (h *SecurityHandler) GetAllLogs(c *gin.Context) {
 	from := c.Query("from")
 	to := c.Query("to")
-	plateNumber := c.Query("plateNumber") // добавляем фильтр по номеру
+	plateNumber := c.Query("plateNumber")
 
 	var fromTime, toTime time.Time
 	var err error
 
-	// Если даты не указаны - за последние 24 часа
 	if from == "" && to == "" {
 		toTime = time.Now()
 		fromTime = toTime.AddDate(0, 0, -1)
@@ -264,7 +252,6 @@ func (h *SecurityHandler) GetAllLogs(c *gin.Context) {
 		}
 	}
 
-	// Получаем логи с фильтрацией
 	logs, err := h.accessLogRepo.GetByDateRangeAndPlate(fromTime, toTime, plateNumber)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при получении логов"})
@@ -301,6 +288,11 @@ func (h *SecurityHandler) SearchPlates(c *gin.Context) {
 		log.Printf("❌ Ошибка при поиске номеров: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при поиске номеров"})
 		return
+	}
+
+	// Возвращаем пустой массив вместо null
+	if plates == nil {
+		plates = []map[string]interface{}{}
 	}
 
 	c.JSON(http.StatusOK, plates)
