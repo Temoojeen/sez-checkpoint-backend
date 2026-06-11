@@ -80,14 +80,13 @@ func (h *AdminHandler) CreateOrganization(c *gin.Context) {
 	c.JSON(http.StatusCreated, org)
 }
 
-// GetAllOrganizations - получение всех организаций
 func (h *AdminHandler) GetAllOrganizations(c *gin.Context) {
 	organizations, err := h.organizationRepo.GetAll()
 	if err != nil {
+		log.Printf("❌ Ошибка при получении организаций: %v", err) // добавь эту строку
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при получении организаций"})
 		return
 	}
-
 	c.JSON(http.StatusOK, organizations)
 }
 

@@ -71,7 +71,7 @@ func main() {
 	approvedPlateHandler := handler.NewApprovedPlateHandler(
 		approvedPlateRepo,
 		userRepo,
-		deletedPlateRepo, // Передаем deletedPlateRepo
+		deletedPlateRepo,
 	)
 	adminHandler := handler.NewAdminHandler(
 		userRepo,
@@ -96,9 +96,17 @@ func main() {
 	// Создаем хендлер для удаленных номеров
 	deletedPlateHandler := handler.NewDeletedPlateHandler(deletedPlateRepo)
 
-	// В функции main, после создания approvedPlateRepo
 	// Создаем ImportHandler
 	importHandler := handler.NewImportHandler(approvedPlateRepo, accessListRepo)
+
+	// Создаем PassManagerHandler
+	passManagerHandler := handler.NewPassManagerHandler(
+		approvedPlateRepo,
+		accessListRepo,
+		userRepo,
+		deletedPlateRepo,
+		organizationRepo,
+	)
 
 	// Настраиваем роутер
 	router := setupRouter(
@@ -112,6 +120,7 @@ func main() {
 		deletedPlateHandler,
 		wsHub,
 		importHandler,
+		passManagerHandler,
 	)
 
 	// Запускаем сервер
@@ -184,7 +193,6 @@ func setupDatabase() (*sql.DB, error) {
 
 // createAdminUser создает пользователя admin с паролем 12346
 func createAdminUser(db *sql.DB) error {
-	// Проверяем, существует ли уже админ
 	var exists bool
 	err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE username = 'admin')`).Scan(&exists)
 	if err != nil {
@@ -196,13 +204,11 @@ func createAdminUser(db *sql.DB) error {
 		return nil
 	}
 
-	// Хешируем пароль 12346
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("12346"), bcrypt.DefaultCost)
 	if err != nil {
 		return fmt.Errorf("ошибка при хешировании пароля: %v", err)
 	}
 
-	// Вставляем админа
 	_, err = db.Exec(`
 	INSERT INTO users (
 		id, username, password_hash, full_name, role_id, is_active, created_at, updated_at
@@ -489,17 +495,18 @@ func createAllTables(db *sql.DB) error {
 
 	// Заполняем таблицу ролей начальными данными
 	_, err = db.Exec(`
-        INSERT INTO roles (id, name, description) VALUES 
-            (1, 'admin', 'Полный доступ к системе'),
-            (2, 'operator', 'Обработка заявок на КПП 1'),
-            (3, 'supervisor', 'Финальное утверждение'),
-            (4, 'participant', 'Подача заявок'),
-            (5, 'security', 'Просмотр списков и истории'),
-            (6, 'smartparking_operator', 'Обработка заявок на SmartParking')
-        ON CONFLICT (id) DO UPDATE SET 
-            name = EXCLUDED.name,
-            description = EXCLUDED.description
-    `)
+    INSERT INTO roles (id, name, description) VALUES 
+        (1, 'admin', 'Полный доступ к системе'),
+        (2, 'operator', 'Обработка заявок на КПП 1'),
+        (3, 'supervisor', 'Финальное утверждение'),
+        (4, 'participant', 'Подача заявок'),
+        (5, 'security', 'Просмотр списков и истории'),
+        (6, 'smartparking_operator', 'Обработка заявок на SmartParking'),
+        (7, 'pass_manager', 'Управление номерами в списках')
+    ON CONFLICT (id) DO UPDATE SET 
+        name = EXCLUDED.name,
+        description = EXCLUDED.description
+`)
 	if err != nil {
 		return fmt.Errorf("ошибка вставки ролей: %v", err)
 	}
@@ -530,6 +537,7 @@ func setupRouter(
 	deletedPlateHandler *handler.DeletedPlateHandler,
 	wsHub *websocket.Hub,
 	importHandler *handler.ImportHandler,
+	passManagerHandler *handler.PassManagerHandler,
 ) *gin.Engine {
 	router := gin.Default()
 
@@ -610,7 +618,19 @@ func setupRouter(
 		// Общий маршрут для получения заявки по ID (доступен всем)
 		api.GET("/applications/:id", applicationHandler.GetByID)
 
-		// Маршруты для админа (roleId = 1)
+		// Маршруты для менеджера пропусков (roleId = 7)
+		passManager := api.Group("/pass-manager")
+		passManager.Use(middleware.RoleMiddleware(7))
+		{
+			passManager.GET("/lists", passManagerHandler.GetAllLists)
+			passManager.GET("/plates", passManagerHandler.GetAllPlates)
+			passManager.GET("/plates/:listId", passManagerHandler.GetPlatesByList)
+			passManager.GET("/organizations", passManagerHandler.GetOrganizations)
+			passManager.POST("/plates", passManagerHandler.AddPlate)
+			passManager.PUT("/plates/:id", passManagerHandler.UpdatePlate)
+			passManager.DELETE("/plates/:id", passManagerHandler.DeletePlate)
+		}
+
 		// Маршруты для админа (roleId = 1)
 		admin := api.Group("/admin")
 		admin.Use(middleware.RoleMiddleware(1))
@@ -637,6 +657,7 @@ func setupRouter(
 			admin.PUT("/users/:id", adminHandler.UpdateUser)
 			admin.DELETE("/users/:id", adminHandler.DeleteUser)
 			admin.PUT("/users/:id/password", adminHandler.UpdateUserPassword)
+			admin.DELETE("/users/:id/hard", adminHandler.HardDeleteUser)
 
 			// Управление списками доступа
 			admin.POST("/access-lists", adminHandler.CreateAccessList)
@@ -644,13 +665,13 @@ func setupRouter(
 			admin.GET("/access-lists/:id", adminHandler.GetAccessList)
 			admin.PUT("/access-lists/:id", adminHandler.UpdateAccessList)
 			admin.DELETE("/access-lists/:id", adminHandler.DeleteAccessList)
-			admin.GET("/access-logs", securityHandler.GetAllLogs)
 			admin.DELETE("/access-lists/:id/hard", adminHandler.HardDeleteAccessList)
+			admin.GET("/access-logs", securityHandler.GetAllLogs)
+
 			// Права пользователей на списки
 			admin.POST("/users/:id/list-permissions", adminHandler.AddListPermission)
 			admin.GET("/users/:id/list-permissions", adminHandler.GetUserListPermissions)
 			admin.DELETE("/users/:id/list-permissions/:listId", adminHandler.RemoveListPermission)
-			admin.DELETE("/users/:id/hard", adminHandler.HardDeleteUser)
 
 			// Управление утвержденными номерами
 			admin.POST("/approved-plates/direct", adminHandler.AddDirectPlate)
@@ -672,7 +693,7 @@ func setupRouter(
 			admin.PUT("/applications/:id/approve-as-supervisor", applicationHandler.AdminApproveAsSupervisor)
 			admin.PUT("/applications/:id/reject", applicationHandler.AdminReject)
 
-			// Статистика (только один раз)
+			// Статистика
 			admin.GET("/dashboard/stats", adminHandler.GetDashboardStats)
 		}
 
@@ -682,7 +703,7 @@ func setupRouter(
 		{
 			security.GET("/recent-logs", securityHandler.GetRecentLogs)
 			security.GET("/check-plate/:number", securityHandler.CheckPlate)
-			security.GET("/search-plates", securityHandler.SearchPlates) // ДОБАВИТЬ ЭТУ СТРОКУ
+			security.GET("/search-plates", securityHandler.SearchPlates)
 			security.POST("/log-access", securityHandler.LogAccess)
 			security.GET("/statistics", securityHandler.GetStatistics)
 			security.GET("/logs/plate/:number", securityHandler.GetLogsByPlate)
