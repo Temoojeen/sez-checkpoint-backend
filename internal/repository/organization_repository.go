@@ -135,7 +135,6 @@ func (r *OrganizationRepository) Update(org *models.Organization) error {
 
 // Delete - удаляет организацию и все связанные данные
 func (r *OrganizationRepository) Delete(id string) error {
-	// Начинаем транзакцию
 	tx, err := r.db.Begin()
 	if err != nil {
 		return err
@@ -166,10 +165,10 @@ func (r *OrganizationRepository) Delete(id string) error {
 		return fmt.Errorf("ошибка удаления договоров организации: %v", err)
 	}
 
-	// 5. Отвязываем пользователей от организации (ставим NULL)
-	_, err = tx.Exec(`UPDATE users SET organization_id = NULL WHERE organization_id = $1`, id)
+	// 5. Удаляем пользователей организации
+	_, err = tx.Exec(`DELETE FROM users WHERE organization_id = $1`, id)
 	if err != nil {
-		return fmt.Errorf("ошибка отвязки пользователей: %v", err)
+		return fmt.Errorf("ошибка удаления пользователей организации: %v", err)
 	}
 
 	// 6. Удаляем саму организацию
@@ -186,7 +185,6 @@ func (r *OrganizationRepository) Delete(id string) error {
 		return errors.New("организация не найдена")
 	}
 
-	// Фиксируем транзакцию
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("ошибка при коммите транзакции: %v", err)
 	}

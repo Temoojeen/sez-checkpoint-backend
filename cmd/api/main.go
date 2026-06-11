@@ -658,6 +658,7 @@ func setupRouter(
 			admin.DELETE("/users/:id", adminHandler.DeleteUser)
 			admin.PUT("/users/:id/password", adminHandler.UpdateUserPassword)
 			admin.DELETE("/users/:id/hard", adminHandler.HardDeleteUser)
+			admin.GET("/organizations/:id/users", adminHandler.GetUsersByOrganization)
 
 			// Управление списками доступа
 			admin.POST("/access-lists", adminHandler.CreateAccessList)
