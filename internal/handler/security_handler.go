@@ -69,9 +69,23 @@ func (h *SecurityHandler) CheckPlate(c *gin.Context) {
 	log.Printf("   OrganizationName: '%s'", plate.OrganizationName)
 	log.Printf("   ListName: '%s'", plate.ListName)
 
+	// Проверяем, активен ли номер (с учётом только даты, без времени)
 	isActive := plate.IsActive
-	if plate.ValidUntil != nil && plate.ValidUntil.Before(time.Now()) {
-		isActive = false
+	if plate.ValidUntil != nil {
+		now := time.Now()
+		validUntilLocal := plate.ValidUntil.In(now.Location())
+		todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+
+		log.Printf("⏰ Проверка даты: validUntil=%v, validUntilLocal=%v, todayStart=%v",
+			plate.ValidUntil, validUntilLocal, todayStart)
+
+		// Номер неактивен только если validUntil раньше начала сегодняшнего дня
+		if validUntilLocal.Before(todayStart) {
+			isActive = false
+			log.Printf("❌ Номер неактивен: validUntilLocal < todayStart")
+		} else {
+			log.Printf("✅ Номер активен: validUntilLocal >= todayStart")
+		}
 	}
 
 	go h.logAccessAttempt(plateNumber, isActive, plate.ListName)
@@ -290,7 +304,6 @@ func (h *SecurityHandler) SearchPlates(c *gin.Context) {
 		return
 	}
 
-	// Возвращаем пустой массив вместо null
 	if plates == nil {
 		plates = []map[string]interface{}{}
 	}

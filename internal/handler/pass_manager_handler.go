@@ -91,6 +91,7 @@ func (h *PassManagerHandler) AddPlate(c *gin.Context) {
 		OrganizationID string `json:"organizationId"`
 		WithoutOrg     bool   `json:"withoutOrg"`
 		Notes          string `json:"notes"`
+		ValidUntil     string `json:"validUntil"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -115,6 +116,12 @@ func (h *PassManagerHandler) AddPlate(c *gin.Context) {
 			}
 			if req.Notes != "" {
 				existingPlate.Notes = req.Notes
+			}
+			if req.ValidUntil != "" {
+				t, err := time.Parse("2006-01-02", req.ValidUntil)
+				if err == nil {
+					existingPlate.ValidUntil = &t
+				}
 			}
 			if err := h.approvedRepo.Update(existingPlate); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при реактивации номера"})
@@ -145,12 +152,19 @@ func (h *PassManagerHandler) AddPlate(c *gin.Context) {
 		UpdatedAt:    time.Now(),
 	}
 
+	// Обрабатываем дату
+	if req.ValidUntil != "" {
+		t, err := time.Parse("2006-01-02", req.ValidUntil)
+		if err == nil {
+			plate.ValidUntil = &t
+		}
+	}
+
 	// Если указана организация — используем её
 	if req.OrganizationID != "" && !req.WithoutOrg {
 		plate.OrganizationID = &req.OrganizationID
 	} else if req.WithoutOrg {
-		// Ищем организацию "Гость"
-		guestOrg, err := h.organizationRepo.GetByBIN("GUEST")
+		guestOrg, err := h.organizationRepo.GetByBIN("123456789012")
 		if err == nil && guestOrg != nil {
 			plate.OrganizationID = &guestOrg.ID
 		}
@@ -179,6 +193,7 @@ func (h *PassManagerHandler) UpdatePlate(c *gin.Context) {
 		WithoutOrg     *bool  `json:"withoutOrg"`
 		Notes          string `json:"notes"`
 		IsActive       *bool  `json:"isActive"`
+		ValidUntil     string `json:"validUntil"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -213,11 +228,17 @@ func (h *PassManagerHandler) UpdatePlate(c *gin.Context) {
 	if req.IsActive != nil {
 		plate.IsActive = *req.IsActive
 	}
+	if req.ValidUntil != "" {
+		t, err := time.Parse("2006-01-02", req.ValidUntil)
+		if err == nil {
+			plate.ValidUntil = &t
+		}
+	}
 
 	if req.OrganizationID != "" {
 		plate.OrganizationID = &req.OrganizationID
 	} else if req.WithoutOrg != nil && *req.WithoutOrg {
-		guestOrg, err := h.organizationRepo.GetByBIN("GUEST")
+		guestOrg, err := h.organizationRepo.GetByBIN("123456789012")
 		if err == nil && guestOrg != nil {
 			plate.OrganizationID = &guestOrg.ID
 		} else {
@@ -256,14 +277,12 @@ func (h *PassManagerHandler) DeletePlate(c *gin.Context) {
 	userID, _ := c.Get("userID")
 	userIDStr := userID.(string)
 
-	// Получаем имя пользователя
 	user, err := h.userRepo.GetByID(userIDStr)
 	userName := ""
 	if err == nil && user != nil {
 		userName = user.FullName
 	}
 
-	// Сохраняем в историю удаленных
 	deletedPlate := &models.DeletedPlate{
 		ID:              uuid.New().String(),
 		PlateNumber:     plate.PlateNumber,

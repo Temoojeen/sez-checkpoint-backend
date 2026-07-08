@@ -233,26 +233,26 @@ func (r *ApplicationRepository) GetByContract(contractID string) ([]*models.Appl
 }
 
 // GetByContract - получает утвержденные номера по договору
-func (r *ApprovedPlateRepository) GetByContract(contractID string) ([]*models.ApprovedPlate, error) {
-	rows, err := r.db.Query(`
-        SELECT id FROM approved_plates WHERE contract_id = $1
-    `, contractID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+// func (r *ApprovedPlateRepository) GetByContract(contractID string) ([]*models.ApprovedPlate, error) {
+// 	rows, err := r.db.Query(`
+//         SELECT id FROM approved_plates WHERE contract_id = $1
+//     `, contractID)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	defer rows.Close()
 
-	var plates []*models.ApprovedPlate
-	for rows.Next() {
-		plate := &models.ApprovedPlate{}
-		err := rows.Scan(&plate.ID)
-		if err != nil {
-			return nil, err
-		}
-		plates = append(plates, plate)
-	}
-	return plates, nil
-}
+// 	var plates []*models.ApprovedPlate
+// 	for rows.Next() {
+// 		plate := &models.ApprovedPlate{}
+// 		err := rows.Scan(&plate.ID)
+// 		if err != nil {
+// 			return nil, err
+// 		}
+// 		plates = append(plates, plate)
+// 	}
+// 	return plates, nil
+// }
 
 // Delete - удаляет договор
 func (r *ContractRepository) Delete(id string) error {

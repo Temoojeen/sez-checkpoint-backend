@@ -85,7 +85,7 @@ func (r *ApprovedPlateRepository) GetByPlateNumber(plateNumber string) (*models.
             o.name as organization_name,
             al.name as list_name,
             al.list_type,
-            al.color as list_color  -- Добавляем color
+            al.color as list_color
         FROM approved_plates ap
         LEFT JOIN organizations o ON ap.organization_id = o.id
         LEFT JOIN access_lists al ON ap.list_id = al.id
@@ -99,7 +99,7 @@ func (r *ApprovedPlateRepository) GetByPlateNumber(plateNumber string) (*models.
 		&plate.ContractID, &plate.OrganizationID, &plate.ListID, &plate.ApplicationID,
 		&plate.ApprovedBy, &plate.ValidFrom, &plate.ValidUntil, &plate.IsActive, &plate.Notes,
 		&plate.CreatedAt, &plate.UpdatedAt,
-		&plate.OrganizationName, &plate.ListName, &plate.ListType, &plate.ListColor, // Добавляем ListColor
+		&plate.OrganizationName, &plate.ListName, &plate.ListType, &plate.ListColor,
 	)
 
 	if err == sql.ErrNoRows {
@@ -143,8 +143,6 @@ func (r *ApprovedPlateRepository) GetAll(organizationID, listID string, onlyActi
 		argCount++
 	}
 
-	// Фильтруем только активные, если параметр onlyActive = true
-	// По умолчанию возвращаем все номера (включая неактивные)
 	if onlyActive {
 		query += " AND ap.is_active = true AND (ap.valid_until IS NULL OR ap.valid_until >= CURRENT_DATE)"
 	}
@@ -176,7 +174,6 @@ func (r *ApprovedPlateRepository) GetAll(organizationID, listID string, onlyActi
 			return nil, err
 		}
 
-		// Конвертируем NULL значения
 		if contractID.Valid {
 			plate.ContractID = &contractID.String
 		}
@@ -233,16 +230,12 @@ func (r *ApprovedPlateRepository) GetByList(listID string) ([]*models.ApprovedPl
 func (r *ApprovedPlateRepository) GetByPlateNumberAndList(plateNumber, listID string) (*models.ApprovedPlate, error) {
 	plate := &models.ApprovedPlate{}
 	query := `
-        SELECT 
-            id, plate_number, created_at
+        SELECT id, plate_number, created_at
         FROM approved_plates 
         WHERE plate_number = $1 AND list_id = $2 AND is_active = true
         LIMIT 1
     `
-	err := r.db.QueryRow(query, plateNumber, listID).Scan(
-		&plate.ID, &plate.PlateNumber, &plate.CreatedAt,
-	)
-
+	err := r.db.QueryRow(query, plateNumber, listID).Scan(&plate.ID, &plate.PlateNumber, &plate.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, errors.New("номер не найден")
 	}
@@ -253,10 +246,8 @@ func (r *ApprovedPlateRepository) GetByPlateNumberAndList(plateNumber, listID st
 func (r *ApprovedPlateRepository) GetByPlateNumberAndListIncludeInactive(plateNumber, listID string) (*models.ApprovedPlate, error) {
 	plate := &models.ApprovedPlate{}
 	query := `
-        SELECT 
-            id, plate_number, vehicle_brand, vehicle_model, vehicle_color,
-            organization_id, list_id, valid_from, valid_until, is_active, notes,
-            created_at, updated_at
+        SELECT id, plate_number, vehicle_brand, vehicle_model, vehicle_color,
+            organization_id, list_id, valid_from, valid_until, is_active, notes, created_at, updated_at
         FROM approved_plates 
         WHERE plate_number = $1 AND list_id = $2
         LIMIT 1
@@ -266,27 +257,26 @@ func (r *ApprovedPlateRepository) GetByPlateNumberAndListIncludeInactive(plateNu
 		&plate.OrganizationID, &plate.ListID, &plate.ValidFrom, &plate.ValidUntil,
 		&plate.IsActive, &plate.Notes, &plate.CreatedAt, &plate.UpdatedAt,
 	)
-
 	if err == sql.ErrNoRows {
 		return nil, errors.New("номер не найден")
 	}
 	return plate, err
 }
 
+// CheckExistsInList - проверяет существует ли номер в конкретном списке
+// func (r *ApprovedPlateRepository) CheckExistsInList(plateNumber, listID string) (bool, error) {
+// 	var exists bool
+// 	query := `SELECT EXISTS(SELECT 1 FROM approved_plates WHERE plate_number = $1 AND list_id = $2)`
+// 	err := r.db.QueryRow(query, plateNumber, listID).Scan(&exists)
+// 	return exists, err
+// }
+
 // Update - обновляет данные утвержденного номера
 func (r *ApprovedPlateRepository) Update(plate *models.ApprovedPlate) error {
 	query := `
         UPDATE approved_plates SET
-            plate_number = $1,
-            vehicle_brand = $2,
-            vehicle_model = $3,
-            vehicle_color = $4,
-            list_id = $5,
-            valid_from = $6,
-            valid_until = $7,
-            is_active = $8,
-            notes = $9,
-            updated_at = $10
+            plate_number = $1, vehicle_brand = $2, vehicle_model = $3, vehicle_color = $4,
+            list_id = $5, valid_from = $6, valid_until = $7, is_active = $8, notes = $9, updated_at = $10
         WHERE id = $11
     `
 	result, err := r.db.Exec(query,
@@ -297,11 +287,7 @@ func (r *ApprovedPlateRepository) Update(plate *models.ApprovedPlate) error {
 	if err != nil {
 		return err
 	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
+	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
 		return errors.New("запись не найдена")
 	}
@@ -315,11 +301,7 @@ func (r *ApprovedPlateRepository) Delete(id string) error {
 	if err != nil {
 		return err
 	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
+	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
 		return errors.New("запись не найдена")
 	}
@@ -331,30 +313,19 @@ func (r *ApprovedPlateRepository) HardDelete(id string) error {
 	query := `DELETE FROM approved_plates WHERE id = $1`
 	result, err := r.db.Exec(query, id)
 	if err != nil {
-		log.Printf("❌ Ошибка в HardDelete: %v", err)
 		return err
 	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
+	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
 		return errors.New("запись не найдена")
 	}
-	log.Printf("✅ Номер %s полностью удален из approved_plates", id)
 	return nil
 }
 
 // CheckIfExists - проверяет существует ли номер в списке
 func (r *ApprovedPlateRepository) CheckIfExists(plateNumber, listID string) (bool, error) {
 	var exists bool
-	query := `
-        SELECT EXISTS(
-            SELECT 1 FROM approved_plates 
-            WHERE plate_number = $1 AND list_id = $2 AND is_active = true
-        )
-    `
+	query := `SELECT EXISTS(SELECT 1 FROM approved_plates WHERE plate_number = $1 AND list_id = $2 AND is_active = true)`
 	err := r.db.QueryRow(query, plateNumber, listID).Scan(&exists)
 	return exists, err
 }
@@ -362,23 +333,14 @@ func (r *ApprovedPlateRepository) CheckIfExists(plateNumber, listID string) (boo
 // CheckIfExistsTx - проверяет существует ли номер в списке (в рамках транзакции)
 func (r *ApprovedPlateRepository) CheckIfExistsTx(tx *sql.Tx, plateNumber, listID string) (bool, error) {
 	var exists bool
-	query := `
-        SELECT EXISTS(
-            SELECT 1 FROM approved_plates 
-            WHERE plate_number = $1 AND list_id = $2 AND is_active = true
-        )
-    `
+	query := `SELECT EXISTS(SELECT 1 FROM approved_plates WHERE plate_number = $1 AND list_id = $2 AND is_active = true)`
 	err := tx.QueryRow(query, plateNumber, listID).Scan(&exists)
 	return exists, err
 }
 
 // ReactivateByPlateAndListTx - реактивирует номер по номеру и списку
 func (r *ApprovedPlateRepository) ReactivateByPlateAndListTx(tx *sql.Tx, plateNumber, listID string) error {
-	query := `
-        UPDATE approved_plates 
-        SET is_active = true, updated_at = $1
-        WHERE plate_number = $2 AND list_id = $3
-    `
+	query := `UPDATE approved_plates SET is_active = true, updated_at = $1 WHERE plate_number = $2 AND list_id = $3`
 	_, err := tx.Exec(query, time.Now(), plateNumber, listID)
 	return err
 }
@@ -386,16 +348,12 @@ func (r *ApprovedPlateRepository) ReactivateByPlateAndListTx(tx *sql.Tx, plateNu
 // GetExpiringSoon - получает номера с истекающим сроком
 func (r *ApprovedPlateRepository) GetExpiringSoon(days int) ([]*models.ApprovedPlate, error) {
 	rows, err := r.db.Query(`
-        SELECT 
-            ap.id, ap.plate_number, ap.organization_id, ap.list_id,
-            ap.valid_until,
-            o.name as organization_name,
-            al.name as list_name
+        SELECT ap.id, ap.plate_number, ap.organization_id, ap.list_id, ap.valid_until,
+            o.name as organization_name, al.name as list_name
         FROM approved_plates ap
         LEFT JOIN organizations o ON ap.organization_id = o.id
         LEFT JOIN access_lists al ON ap.list_id = al.id
-        WHERE ap.is_active = true 
-          AND ap.valid_until IS NOT NULL
+        WHERE ap.is_active = true AND ap.valid_until IS NOT NULL
           AND ap.valid_until BETWEEN CURRENT_DATE AND CURRENT_DATE + $1
         ORDER BY ap.valid_until
     `, days)
@@ -407,10 +365,8 @@ func (r *ApprovedPlateRepository) GetExpiringSoon(days int) ([]*models.ApprovedP
 	var plates []*models.ApprovedPlate
 	for rows.Next() {
 		plate := &models.ApprovedPlate{}
-		err := rows.Scan(
-			&plate.ID, &plate.PlateNumber, &plate.OrganizationID, &plate.ListID,
-			&plate.ValidUntil, &plate.OrganizationName, &plate.ListName,
-		)
+		err := rows.Scan(&plate.ID, &plate.PlateNumber, &plate.OrganizationID, &plate.ListID,
+			&plate.ValidUntil, &plate.OrganizationName, &plate.ListName)
 		if err != nil {
 			return nil, err
 		}
@@ -423,13 +379,10 @@ func (r *ApprovedPlateRepository) GetExpiringSoon(days int) ([]*models.ApprovedP
 func (r *ApprovedPlateRepository) GetByID(id string) (*models.ApprovedPlate, error) {
 	plate := &models.ApprovedPlate{}
 	query := `
-        SELECT 
-            id, plate_number, vehicle_brand, vehicle_model, vehicle_color,
+        SELECT id, plate_number, vehicle_brand, vehicle_model, vehicle_color,
             contract_id, organization_id, list_id, application_id,
-            approved_by, valid_from, valid_until, is_active, notes,
-            created_at, updated_at
-        FROM approved_plates 
-        WHERE id = $1
+            approved_by, valid_from, valid_until, is_active, notes, created_at, updated_at
+        FROM approved_plates WHERE id = $1
     `
 	err := r.db.QueryRow(query, id).Scan(
 		&plate.ID, &plate.PlateNumber, &plate.VehicleBrand, &plate.VehicleModel, &plate.VehicleColor,
@@ -437,7 +390,6 @@ func (r *ApprovedPlateRepository) GetByID(id string) (*models.ApprovedPlate, err
 		&plate.ApprovedBy, &plate.ValidFrom, &plate.ValidUntil, &plate.IsActive, &plate.Notes,
 		&plate.CreatedAt, &plate.UpdatedAt,
 	)
-
 	if err == sql.ErrNoRows {
 		return nil, errors.New("номер не найден")
 	}
@@ -483,7 +435,6 @@ func (r *ApprovedPlateRepository) GetByPlateNumberIncludeInactive(plateNumber st
 		return nil, err
 	}
 
-	// Конвертируем NULL значения
 	if contractID.Valid {
 		plate.ContractID = &contractID.String
 	}
@@ -510,7 +461,6 @@ func (r *ApprovedPlateRepository) GetByPlateNumberIncludeInactive(plateNumber st
 	if organizationName.Valid {
 		plate.OrganizationName = organizationName.String
 	}
-	// Если organizationName не валидный, оставляем пустую строку
 	if listName.Valid {
 		plate.ListName = listName.String
 	}
@@ -524,11 +474,13 @@ func (r *ApprovedPlateRepository) GetByPlateNumberIncludeInactive(plateNumber st
 	return plate, nil
 }
 
+// SearchByPartialPlate - поиск номеров по частичному совпадению
 func (r *ApprovedPlateRepository) SearchByPartialPlate(query string) ([]map[string]interface{}, error) {
 	rows, err := r.db.Query(`
 		SELECT DISTINCT ON (ap.plate_number)
 			ap.plate_number,
 			ap.is_active,
+			ap.valid_until,
 			o.name as organization_name,
 			al.name as list_name,
 			al.color as list_color
@@ -538,21 +490,33 @@ func (r *ApprovedPlateRepository) SearchByPartialPlate(query string) ([]map[stri
 		WHERE ap.plate_number ILIKE $1
 		ORDER BY ap.plate_number, ap.is_active DESC
 		LIMIT 10
-	`, "%"+query+"%") // <-- изменил на %query% вместо query%
+	`, "%"+query+"%")
 
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var results []map[string]interface{}
+	results := []map[string]interface{}{}
+
 	for rows.Next() {
 		var plateNumber string
 		var isActive bool
+		var validUntil sql.NullTime
 		var organizationName, listName, listColor sql.NullString
 
-		if err := rows.Scan(&plateNumber, &isActive, &organizationName, &listName, &listColor); err != nil {
+		if err := rows.Scan(&plateNumber, &isActive, &validUntil, &organizationName, &listName, &listColor); err != nil {
 			continue
+		}
+
+		// Проверяем срок действия — номер активен до конца дня по локальному времени
+		if isActive && validUntil.Valid {
+			now := time.Now()
+			validUntilLocal := validUntil.Time.In(now.Location())
+			todayDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+			if validUntilLocal.Before(todayDate) {
+				isActive = false
+			}
 		}
 
 		result := map[string]interface{}{
@@ -576,20 +540,15 @@ func (r *ApprovedPlateRepository) SearchByPartialPlate(query string) ([]map[stri
 
 // FindSimilarPlate - ищет похожий номер (с разницей в 1 символ)
 func (r *ApprovedPlateRepository) FindSimilarPlate(plateNumber string) (*models.ApprovedPlate, error) {
-	// Сначала ищем точное совпадение
 	plate, err := r.GetByPlateNumberIncludeInactive(plateNumber)
 	if err == nil {
 		return plate, nil
 	}
 
-	// Получаем все номера с такой же длиной ±1
 	length := len(plateNumber)
 	rows, err := r.db.Query(`
-		SELECT DISTINCT plate_number
-		FROM approved_plates
-		WHERE is_active = true
-		  AND LENGTH(plate_number) BETWEEN $1 AND $2
-		LIMIT 100
+		SELECT DISTINCT plate_number FROM approved_plates
+		WHERE is_active = true AND LENGTH(plate_number) BETWEEN $1 AND $2 LIMIT 100
 	`, length-1, length+1)
 	if err != nil {
 		return nil, err
@@ -604,9 +563,8 @@ func (r *ApprovedPlateRepository) FindSimilarPlate(plateNumber string) (*models.
 		if err := rows.Scan(&candidate); err != nil {
 			continue
 		}
-
 		distance := levenshteinDistance(plateNumber, candidate)
-		if distance < bestDistance && distance <= 2 { // Максимум 2 отличия
+		if distance < bestDistance && distance <= 2 {
 			bestDistance = distance
 			bestMatch = candidate
 		}
@@ -620,7 +578,6 @@ func (r *ApprovedPlateRepository) FindSimilarPlate(plateNumber string) (*models.
 	return nil, errors.New("номер не найден")
 }
 
-// levenshteinDistance - вычисляет расстояние Левенштейна между двумя строками
 func levenshteinDistance(s1, s2 string) int {
 	if len(s1) == 0 {
 		return len(s2)
@@ -628,8 +585,6 @@ func levenshteinDistance(s1, s2 string) int {
 	if len(s2) == 0 {
 		return len(s1)
 	}
-
-	// Создаем матрицу
 	matrix := make([][]int, len(s1)+1)
 	for i := range matrix {
 		matrix[i] = make([]int, len(s2)+1)
@@ -638,21 +593,15 @@ func levenshteinDistance(s1, s2 string) int {
 	for j := 0; j <= len(s2); j++ {
 		matrix[0][j] = j
 	}
-
 	for i := 1; i <= len(s1); i++ {
 		for j := 1; j <= len(s2); j++ {
 			cost := 1
 			if s1[i-1] == s2[j-1] {
 				cost = 0
 			}
-			matrix[i][j] = min(
-				matrix[i-1][j]+1,
-				matrix[i][j-1]+1,
-				matrix[i-1][j-1]+cost,
-			)
+			matrix[i][j] = min(matrix[i-1][j]+1, matrix[i][j-1]+1, matrix[i-1][j-1]+cost)
 		}
 	}
-
 	return matrix[len(s1)][len(s2)]
 }
 
@@ -664,4 +613,22 @@ func min(a, b, c int) int {
 		return b
 	}
 	return c
+}
+
+// GetByContract - получает утвержденные номера по договору
+func (r *ApprovedPlateRepository) GetByContract(contractID string) ([]*models.ApprovedPlate, error) {
+	rows, err := r.db.Query(`SELECT id FROM approved_plates WHERE contract_id = $1`, contractID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var plates []*models.ApprovedPlate
+	for rows.Next() {
+		plate := &models.ApprovedPlate{}
+		if err := rows.Scan(&plate.ID); err != nil {
+			return nil, err
+		}
+		plates = append(plates, plate)
+	}
+	return plates, nil
 }

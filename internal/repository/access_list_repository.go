@@ -262,3 +262,12 @@ func (r *AccessListRepository) HardDelete(id string) error {
 
 	return nil
 }
+
+// ClearPlates - удаляет все номера из списка
+func (r *AccessListRepository) ClearPlates(listID string) (int64, error) {
+	result, err := r.db.Exec(`DELETE FROM approved_plates WHERE list_id = $1`, listID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}

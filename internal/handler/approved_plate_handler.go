@@ -73,7 +73,8 @@ func (h *ApprovedPlateHandler) GetPlatesByList(c *gin.Context) {
 		return
 	}
 
-	plates, err := h.approvedPlateRepo.GetByList(listID)
+	// Для участников показываем все номера, включая неактивные
+	plates, err := h.approvedPlateRepo.GetAll("", listID, false)
 	if err != nil {
 		log.Printf("❌ Ошибка при получении номеров по списку %s: %v", listID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при получении номеров"})

@@ -1007,6 +1007,7 @@ func (r *ApplicationRepository) GetActiveApplicationByPlateAndList(plateNumber, 
 		  AND list_id = $2 
 		  AND applicant_id = $3
 		  AND status IN ('pending', 'operator_approved')
+		  AND destination = 'kpp1'
 		LIMIT 1
 	`
 	err := r.db.QueryRow(query, plateNumber, listID, applicantID).Scan(

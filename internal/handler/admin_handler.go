@@ -546,6 +546,10 @@ func (h *AdminHandler) AddDirectPlate(c *gin.Context) {
 			if req.Notes != "" {
 				existingPlate.Notes = req.Notes
 			}
+			if req.ValidUntil != "" {
+				t, _ := time.Parse("2006-01-02", req.ValidUntil)
+				existingPlate.ValidUntil = &t
+			}
 			if err := h.approvedRepo.Update(existingPlate); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при реактивации номера"})
 				return
@@ -557,12 +561,24 @@ func (h *AdminHandler) AddDirectPlate(c *gin.Context) {
 		return
 	}
 
+	// Парсим даты
+	var validFrom, validUntil *time.Time
+	if req.ValidFrom != "" {
+		t, _ := time.Parse("2006-01-02", req.ValidFrom)
+		validFrom = &t
+	}
+	if req.ValidUntil != "" {
+		t, _ := time.Parse("2006-01-02", req.ValidUntil)
+		validUntil = &t
+	}
+
 	adminID, _ := c.Get("userID")
 	adminIDStr := adminID.(string)
 	plate := &models.ApprovedPlate{
 		ID: uuid.New().String(), PlateNumber: req.PlateNumber, VehicleBrand: req.VehicleBrand,
 		VehicleModel: req.VehicleModel, VehicleColor: req.VehicleColor,
 		OrganizationID: &req.OrganizationID, ListID: req.ListID, ApprovedBy: &adminIDStr,
+		ValidFrom: validFrom, ValidUntil: validUntil,
 		IsActive: true, Notes: req.Notes, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	if err := h.approvedRepo.Create(plate); err != nil {
